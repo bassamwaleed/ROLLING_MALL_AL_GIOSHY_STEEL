@@ -78,12 +78,10 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
-  // إعدادات التحكم
   const [billetWeight, setBilletWeight] = useState(0.75); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
   const [customLogo, setCustomLogo] = useState("https://placehold.co/400x150/1e293b/ffffff?text=Al-Gioshy+Steel&font=Montserrat");
 
-  // للتحكم في نافذة الإعدادات
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
@@ -172,11 +170,10 @@ export default function App() {
     setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
   };
 
-  // دالة العودة لتاريخ ووردية (الآن)
   const handleGoToToday = () => {
-    const currentState = getInitialProductionState();
-    setCurrentProdDate(currentState.prodDate);
-    setSelectedShift(currentState.initialShift);
+    const state = getInitialProductionState();
+    setCurrentProdDate(state.prodDate);
+    setSelectedShift(state.initialShift);
   };
 
   /* ======================================================
@@ -202,7 +199,6 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  // دالة الحفظ السحابي (تشمل اللوجو كـ Base64)
   const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
     if (userAuth && db) {
       try {
@@ -225,7 +221,6 @@ export default function App() {
     }
   };
 
-  // --- دوال اللوجو المرفوع (الصورة) ---
   const openSettingsModal = () => {
     setTempLogoUrl(customLogo);
     setIsSettingsOpen(true);
@@ -236,7 +231,6 @@ export default function App() {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        // تحويل الصورة لنص (Base64) وحفظها في الـ State المؤقت
         setTempLogoUrl(reader.result);
       };
       reader.readAsDataURL(file);
@@ -299,12 +293,18 @@ export default function App() {
     }
   };
 
+  // تعديل الدالة لربط الحفظ بالوقت الفعلي للساعة
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
     const addedTons = billetsCount * billetWeight; 
-    const saveTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    
+    // ربط الحفظ بالوقت الفعلي الآن!
+    const realTimeNow = new Date();
+    const saveTime = realTimeNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const exactTimestamp = realTimeNow.getTime(); // بالملي ثانية من الساعة الحية
+    
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
     
@@ -318,6 +318,7 @@ export default function App() {
       newArchive[existingLogIndex].tons += addedTons;
       newArchive[existingLogIndex].time = saveTime; 
       newArchive[existingLogIndex].productSize = selectedProductSize; 
+      newArchive[existingLogIndex].timestamp = exactTimestamp; // التحديث لآخر لحظة بالملي ثانية
     } else {
       const newArchiveLog = { 
         id: Date.now(), 
@@ -328,7 +329,7 @@ export default function App() {
         billets: billetsCount, 
         tons: addedTons, 
         productSize: selectedProductSize, 
-        timestamp: currentProdDate.getTime() 
+        timestamp: exactTimestamp // التحديث لآخر لحظة بالملي ثانية
       };
       newArchive = [newArchiveLog, ...newArchive];
     }
@@ -394,7 +395,7 @@ export default function App() {
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
         <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           
-          {/* عرض لوجو المصنع في شاشة الدخول */}
+          {/* عرض اللوجو في شاشة الدخول */}
           <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
             <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" onError={(e) => e.target.src="https://placehold.co/400x150/1e293b/ffffff?text=Logo+Error"} />
           </div>
@@ -423,7 +424,7 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      {/* نافذة إعدادات النظام (رفع اللوجو من الجهاز) */}
+      {/* نافذة إعدادات النظام المتقدمة */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
@@ -441,31 +442,31 @@ export default function App() {
                   type="file" 
                   accept="image/*"
                   onChange={handleLogoUpload} 
-                  className="w-full border border-slate-300 rounded p-1.5 text-xs focus:border-blue-500 outline-none file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" 
+                  className="w-full border border-slate-300 rounded p-1.5 text-xs focus:border-blue-500 outline-none file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" 
                 />
-                <p className="text-[9px] text-slate-500">اختر صورة المصنع (يفضل حجم صغير) وسيتم حفظها مباشرة في قاعدة البيانات.</p>
+                <p className="text-[9px] text-slate-500">اختر صورة المصنع (يفضل حجم صغير بصيغة PNG أو JPG) وسيتم تطبيقها فوراً في جميع شاشات التطبيق.</p>
               </div>
               
               {tempLogoUrl && (
                 <div className="bg-slate-100 p-3 rounded-lg border border-slate-200 flex flex-col items-center gap-2">
-                  <span className="text-[9px] font-bold text-slate-400">معاينة الشعار:</span>
+                  <span className="text-[9px] font-bold text-slate-400">معاينة الشعار المرفوع:</span>
                   <img src={tempLogoUrl} alt="Preview" className="h-16 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/f1f5f9/64748b?text=Invalid+Image"} />
                 </div>
               )}
 
               <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md mt-2">
-                <Save className="w-4 h-4" /> حفظ الإعدادات
+                <Save className="w-4 h-4" /> تطبيق الإعدادات
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* الشريط العلوي */}
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm">
         <div className="flex justify-between items-center">
           
           <div className="flex items-center gap-2">
-            {/* اللوجو المصغر في شريط التنقل */}
             <div className="bg-white/10 p-0.5 rounded backdrop-blur-sm hidden sm:flex">
                <img src={customLogo} alt="Logo" className="h-7 w-auto max-w-[120px] object-contain" onError={(e) => e.target.src="https://placehold.co/100x30/1e293b/ffffff?text=Logo"} />
             </div>
@@ -494,17 +495,24 @@ export default function App() {
         </div>
       </nav>
 
+      {/* شاشة المتابعة (الداشبورد) */}
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
           
-          <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
-            <span className="font-bold text-slate-700 ml-2">مقاس المنتج الحالي:</span>
-            <div className="flex gap-1">
+          {/* قسم اللوجو البارز واختيار المقاس في صفحة المتابعة */}
+          <div className="bg-white p-2 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
+            <div className="flex items-center gap-3 shrink-0">
+               {/* اللوجو معروض بشكل شيك في لوحة المتابعة */}
+               <img src={customLogo} alt="Dashboard Logo" className="h-8 md:h-10 object-contain drop-shadow-sm" onError={(e) => e.target.src="https://placehold.co/100x30/f1f5f9/64748b?text=Logo"} />
+               <div className="w-px h-6 bg-slate-300 hidden sm:block"></div>
+               <span className="font-bold text-slate-700 hidden sm:inline">مقاس المنتج:</span>
+            </div>
+            <div className="flex gap-1 ml-auto">
               {['10', '12', '16', '18', '22'].map((size) => (
                 <button
                   key={size}
                   onClick={() => handleProductSizeChange(size)}
-                  className={`px-2.5 py-1 rounded font-bold transition-all shrink-0 ${selectedProductSize === size ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200'}`}
+                  className={`px-3 py-1.5 rounded font-bold transition-all shrink-0 ${selectedProductSize === size ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200'}`}
                 >
                   {size} مم
                 </button>
@@ -512,14 +520,14 @@ export default function App() {
             </div>
           </div>
 
+          {/* لوحة تسجيل الفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
                 
-                {/* زرار "الآن" المضاف حديثاً للعودة للوقت الحالي فوراً */}
                 <div className="flex items-center gap-2">
-                  <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center">
+                  <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center" title="العودة لوقت وتاريخ اليوم">
                     الآن <RotateCcw className="w-3 h-3"/>
                   </button>
                   <div className="flex flex-col items-center">
@@ -532,17 +540,18 @@ export default function App() {
               </div>
 
               <div className="flex gap-1 items-center">
-                <input type="number" value={shiftBillets} onChange={(e) => setShiftBillets(e.target.value)} className="flex-1 p-1.5 border border-slate-400 rounded font-mono text-center text-lg font-bold outline-none" placeholder="عدد البليت للوردية" />
+                <input type="number" value={shiftBillets} onChange={(e) => setShiftBillets(e.target.value)} className="flex-1 p-1.5 border border-slate-400 rounded font-mono text-center text-lg font-bold outline-none focus:border-blue-500" placeholder="عدد البليت للوردية" />
                 <select value={selectedShift} onChange={(e) => setSelectedShift(e.target.value)} className="w-1/2 bg-slate-100 border border-slate-400 text-[11px] font-bold p-2 rounded outline-none focus:border-blue-500">
                   {availableShifts.map(shift => <option key={shift} value={shift}>{shift}</option>)}
                 </select>
               </div>
-              <button onClick={handleAddShiftProduction} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded active:scale-95 flex justify-center items-center gap-2">
+              <button onClick={handleAddShiftProduction} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-2 rounded active:scale-95 flex justify-center items-center gap-2 transition-all">
                 <Save className="w-4 h-4" /> حفظ وإغلاق الوردية
               </button>
             </div>
           )}
 
+          {/* لوحة تحكم المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -574,6 +583,7 @@ export default function App() {
             </div>
           )}
 
+          {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -581,7 +591,7 @@ export default function App() {
 
               return (
                 <div key={idx} className={`rounded flex flex-col justify-between border ${stand.isActive ? status.bg : 'bg-slate-300 opacity-60'} ${status.border} p-1 relative overflow-hidden`}>
-                  <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-300/50"><div className={`h-full ${status.bar}`} style={{width: `${percentage}%`}}></div></div>
+                  <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-300/50"><div className={`h-full ${status.bar}`} style={{width: `${percentage}%`, transition: 'width 0.5s ease-in-out'}}></div></div>
                   <div className="flex justify-between items-center z-10">
                     <span className="font-black text-xs">St. {stand.id}</span>
                     {currentUser === 'tech' ? (
@@ -594,10 +604,10 @@ export default function App() {
                   </div>
                   
                   {currentUser === 'tech' ? (
-                    <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1 bg-slate-800 text-white text-[9px] font-bold rounded z-10 active:scale-95">تصفير الدرفيل</button>
+                    <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1 bg-slate-800 text-white text-[9px] font-bold rounded z-10 active:scale-95 transition-transform">تصفير الدرفيل</button>
                   ) : (
                     <div className="mt-1 pt-1 border-t border-black/10 flex items-center justify-between gap-1 z-10">
-                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[8px] px-1 py-0.5 rounded font-bold">ريست</button>
+                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[8px] px-1 py-0.5 rounded font-bold transition-colors">ريست</button>
                        <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-10 text-[10px] text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500" />
                     </div>
                   )}
@@ -638,7 +648,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center">
-                  <p className="text-[10px] font-bold text-purple-800">عدد الورديات المسجلة</p>
+                  <p className="text-[10px] font-bold text-purple-800">الورديات المسجلة</p>
                   <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
                     {aggregatedLogs.length}
                   </p>
