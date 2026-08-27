@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, Image as ImageIcon, UploadCloud } from 'lucide-react';
+// استدعاء الأيقونات الجاهزة
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud } from 'lucide-react';
+// استدعاء دوال Firebase
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -30,7 +32,9 @@ try {
   console.error("Firebase init error:", error);
 }
 
-// مكون فرعي للساعة الحية
+// ======================================================
+// مكون الساعة الحية (المنفصل للحفاظ على الأداء)
+// ======================================================
 const LiveClock = () => {
   const [time, setTime] = useState(new Date());
   
@@ -55,7 +59,7 @@ const LiveClock = () => {
 };
 
 // ======================================================
-// بداية التطبيق الفعلي (المكون الرئيسي App)
+// بداية التطبيق الفعلي
 // ======================================================
 export default function App() {
   /* 2. منطقة المتغيرات الحية (State) */
@@ -78,10 +82,10 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
+  // إعدادات التحكم واللوجو
   const [billetWeight, setBilletWeight] = useState(0.75); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
-  const [customLogo, setCustomLogo] = useState("https://placehold.co/400x150/1e293b/ffffff?text=Al-Gioshy+Steel&font=Montserrat");
-
+  const [customLogo, setCustomLogo] = useState(""); // اللوجو المرفوع
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
@@ -119,7 +123,7 @@ export default function App() {
         if (data.billetWeight) setBilletWeight(data.billetWeight);
         if (data.logoUrl) setCustomLogo(data.logoUrl);
       } else {
-        setDoc(settingsRef, { billetWeight: 0.75, logoUrl: customLogo }, { merge: true });
+        setDoc(settingsRef, { billetWeight: 0.75, logoUrl: "" }, { merge: true });
       }
     });
 
@@ -135,6 +139,7 @@ export default function App() {
     const hour = now.getHours();
     const prodDate = new Date(now);
     
+    // نظام المصنع: اليوم يقلب الساعة 8 صباحاً (قبلها يُحسب على اليوم السابق)
     if (hour < 8) prodDate.setDate(prodDate.getDate() - 1);
     
     const isFriday = prodDate.getDay() === 5; 
@@ -161,6 +166,7 @@ export default function App() {
     if (!availableShifts.includes(selectedShift)) setSelectedShift(availableShifts[0]);
   }, [isFriday]);
 
+  // تغيير اليوم يدوياً للأمام والخلف
   const handleDateChange = (direction) => {
     const newDate = new Date(currentProdDate);
     newDate.setDate(newDate.getDate() + direction);
@@ -170,14 +176,15 @@ export default function App() {
     setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
   };
 
+  // العودة لتاريخ ووقت اللحظة الحالية بقوة
   const handleGoToToday = () => {
     const state = getInitialProductionState();
-    setCurrentProdDate(state.prodDate);
+    setCurrentProdDate(new Date(state.prodDate.getTime())); // Force re-render
     setSelectedShift(state.initialShift);
   };
 
   /* ======================================================
-    5. دوال التشغيل والحفظ السحابي
+    5. دوال الحفظ والتشغيل
     ======================================================
   */
   const handleProductSizeChange = (size) => {
@@ -189,7 +196,7 @@ export default function App() {
       }
       return { ...stand, isActive: active };
     });
-    saveToCloud(newStands, null, billetWeight, null);
+    saveToCloud(newStands, null, null, null);
   };
 
   const getStandStatus = (tons, limit) => {
@@ -199,6 +206,7 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
+  // دالة الحفظ السحابي المركزية (تم دعم تحديث اللوجو)
   const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
     if (userAuth && db) {
       try {
@@ -221,14 +229,15 @@ export default function App() {
     }
   };
 
-  const openSettingsModal = () => {
-    setTempLogoUrl(customLogo);
-    setIsSettingsOpen(true);
-  };
-
+  // رفع اللوجو كصورة (Base64)
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      // التأكد من حجم الصورة حتى لا تثقل قاعدة البيانات (حد أقصى ~1 ميجا)
+      if (file.size > 1024 * 1024) {
+        alert("حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 1 ميجابايت.");
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setTempLogoUrl(reader.result);
@@ -271,7 +280,7 @@ export default function App() {
   };
 
   const handleClearArchive = () => {
-    if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف والإحصائيات القديمة بشكل كامل والبدء من جديد؟')) {
+    if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف القديمة بشكل كامل والبدء من جديد؟')) {
       saveToCloud(stands, [], null, null);
       alert('تم مسح الأرشيف بنجاح.');
     }
@@ -293,17 +302,17 @@ export default function App() {
     }
   };
 
-  // تعديل الدالة لربط الحفظ بالوقت الفعلي للساعة
+  // الدالة الأساسية: التسجيل والربط بالوقت الفعلي الدقيق
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
     const addedTons = billetsCount * billetWeight; 
     
-    // ربط الحفظ بالوقت الفعلي الآن!
-    const realTimeNow = new Date();
-    const saveTime = realTimeNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    const exactTimestamp = realTimeNow.getTime(); // بالملي ثانية من الساعة الحية
+    // ** الحصول على الوقت الفعلي في لحظة الضغط على الحفظ **
+    const exactNow = new Date();
+    const saveTime = exactNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const exactTimestamp = exactNow.getTime(); 
     
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
@@ -314,11 +323,12 @@ export default function App() {
     const existingLogIndex = newArchive.findIndex(log => log.date === dateStr && log.shift === selectedShift);
 
     if (existingLogIndex !== -1) {
+      // تجميع البيانات في حالة التسجيل أكثر من مرة في نفس الوردية
       newArchive[existingLogIndex].billets += billetsCount;
       newArchive[existingLogIndex].tons += addedTons;
-      newArchive[existingLogIndex].time = saveTime; 
+      newArchive[existingLogIndex].time = saveTime; // تحديث الوقت لآخر لحظة تسجيل
       newArchive[existingLogIndex].productSize = selectedProductSize; 
-      newArchive[existingLogIndex].timestamp = exactTimestamp; // التحديث لآخر لحظة بالملي ثانية
+      newArchive[existingLogIndex].timestamp = exactTimestamp; 
     } else {
       const newArchiveLog = { 
         id: Date.now(), 
@@ -329,13 +339,14 @@ export default function App() {
         billets: billetsCount, 
         tons: addedTons, 
         productSize: selectedProductSize, 
-        timestamp: exactTimestamp // التحديث لآخر لحظة بالملي ثانية
+        timestamp: exactTimestamp 
       };
       newArchive = [newArchiveLog, ...newArchive];
     }
 
     saveToCloud(newStands, newArchive, null, null); 
 
+    // الانتقال الصارم للورديات
     const currentDayShifts = currentProdDate.getDay() === 5 ? 
        ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
        ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
@@ -360,7 +371,7 @@ export default function App() {
   };
 
   /* ======================================================
-    6. ترتيب وتجميع الأرشيف للعرض
+    6. ترتيب وتجميع الأرشيف (Aggregation)
     ======================================================
   */
   const groupedArchive = productionArchive.reduce((acc, log) => {
@@ -390,15 +401,20 @@ export default function App() {
     ======================================================
   */
   
+  // شاشة الدخول
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
         <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           
-          {/* عرض اللوجو في شاشة الدخول */}
-          <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
-            <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" onError={(e) => e.target.src="https://placehold.co/400x150/1e293b/ffffff?text=Logo+Error"} />
-          </div>
+          {/* عرض اللوجو المرفوع */}
+          {customLogo ? (
+            <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
+              <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" />
+            </div>
+          ) : (
+            <Settings2 className="w-16 h-16 mx-auto text-blue-500 mb-4" />
+          )}
           
           <h1 className="text-2xl font-black mb-2 text-slate-100">تتبع درافيل الإنتاج</h1>
           <p className="text-blue-400 mb-8 text-sm flex items-center justify-center gap-1 font-bold">
@@ -424,7 +440,7 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      {/* نافذة إعدادات النظام المتقدمة */}
+      {/* نافذة رفع اللوجو */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
@@ -433,29 +449,28 @@ export default function App() {
               <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
             </div>
             <div className="p-4 flex flex-col gap-4">
-              
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
                   <UploadCloud className="w-4 h-4 text-blue-600"/> رفع لوجو المصنع (من الجهاز):
                 </label>
                 <input 
                   type="file" 
-                  accept="image/*"
+                  accept="image/png, image/jpeg"
                   onChange={handleLogoUpload} 
                   className="w-full border border-slate-300 rounded p-1.5 text-xs focus:border-blue-500 outline-none file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" 
                 />
-                <p className="text-[9px] text-slate-500">اختر صورة المصنع (يفضل حجم صغير بصيغة PNG أو JPG) وسيتم تطبيقها فوراً في جميع شاشات التطبيق.</p>
+                <p className="text-[9px] text-slate-500">اختر صورة المصنع (يفضل حجم صغير PNG/JPG) وسيتم تطبيقها فوراً.</p>
               </div>
               
               {tempLogoUrl && (
                 <div className="bg-slate-100 p-3 rounded-lg border border-slate-200 flex flex-col items-center gap-2">
-                  <span className="text-[9px] font-bold text-slate-400">معاينة الشعار المرفوع:</span>
-                  <img src={tempLogoUrl} alt="Preview" className="h-16 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/f1f5f9/64748b?text=Invalid+Image"} />
+                  <span className="text-[9px] font-bold text-slate-400">معاينة الشعار:</span>
+                  <img src={tempLogoUrl} alt="Preview" className="h-16 object-contain" />
                 </div>
               )}
 
               <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md mt-2">
-                <Save className="w-4 h-4" /> تطبيق الإعدادات
+                <Save className="w-4 h-4" /> تطبيق الشعار
               </button>
             </div>
           </div>
@@ -467,9 +482,11 @@ export default function App() {
         <div className="flex justify-between items-center">
           
           <div className="flex items-center gap-2">
-            <div className="bg-white/10 p-0.5 rounded backdrop-blur-sm hidden sm:flex">
-               <img src={customLogo} alt="Logo" className="h-7 w-auto max-w-[120px] object-contain" onError={(e) => e.target.src="https://placehold.co/100x30/1e293b/ffffff?text=Logo"} />
-            </div>
+            {customLogo && (
+              <div className="bg-white/10 p-0.5 rounded backdrop-blur-sm hidden sm:flex">
+                 <img src={customLogo} alt="Logo" className="h-7 w-auto max-w-[120px] object-contain" />
+              </div>
+            )}
             <span className="font-bold text-sm">Roll Tracker</span>
           </div>
 
@@ -495,15 +512,14 @@ export default function App() {
         </div>
       </nav>
 
-      {/* شاشة المتابعة (الداشبورد) */}
+      {/* لوحة التشغيل */}
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
           
-          {/* قسم اللوجو البارز واختيار المقاس في صفحة المتابعة */}
-          <div className="bg-white p-2 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
+          <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
             <div className="flex items-center gap-3 shrink-0">
-               {/* اللوجو معروض بشكل شيك في لوحة المتابعة */}
-               <img src={customLogo} alt="Dashboard Logo" className="h-8 md:h-10 object-contain drop-shadow-sm" onError={(e) => e.target.src="https://placehold.co/100x30/f1f5f9/64748b?text=Logo"} />
+               {/* اللوجو في صفحة المتابعة */}
+               {customLogo && <img src={customLogo} alt="Dashboard Logo" className="h-8 md:h-10 object-contain drop-shadow-sm" />}
                <div className="w-px h-6 bg-slate-300 hidden sm:block"></div>
                <span className="font-bold text-slate-700 hidden sm:inline">مقاس المنتج:</span>
             </div>
@@ -520,14 +536,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* لوحة تسجيل الفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
                 
                 <div className="flex items-center gap-2">
-                  <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center" title="العودة لوقت وتاريخ اليوم">
+                  {/* زرار العودة لـ "الآن" المحدث */}
+                  <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center" title="تحديث لتاريخ ووقت اللحظة الحالية">
                     الآن <RotateCcw className="w-3 h-3"/>
                   </button>
                   <div className="flex flex-col items-center">
@@ -551,7 +567,6 @@ export default function App() {
             </div>
           )}
 
-          {/* لوحة تحكم المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -583,7 +598,6 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -618,6 +632,7 @@ export default function App() {
         </div>
       )}
 
+      {/* الإحصائيات والكيرف */}
       {activeTab === 'analytics' && (
         <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
           <div className="flex items-center justify-between border-b pb-2">
@@ -725,6 +740,7 @@ export default function App() {
         </div>
       )}
 
+      {/* شاشة الأرشيف */}
       {activeTab === 'archive' && (
         <div className="flex-1 bg-slate-100 rounded shadow border border-slate-300 p-1.5 overflow-y-auto">
           {sortedDates.length === 0 ? (
