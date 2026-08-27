@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2 } from 'lucide-react';
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, Image as ImageIcon } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -30,6 +30,30 @@ try {
   console.error("Firebase init error:", error);
 }
 
+// مكون فرعي للساعة الحية
+const LiveClock = () => {
+  const [time, setTime] = useState(new Date());
+  
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex bg-slate-800 border border-slate-700 rounded px-2 py-0.5 items-center gap-1.5 shadow-inner">
+      <Clock className="w-3 h-3 text-blue-400" />
+      <div className="flex flex-col items-center leading-none mt-0.5">
+        <span className="text-[10px] font-mono font-bold text-slate-100" dir="ltr">
+          {time.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        </span>
+        <span className="text-[7px] text-slate-400 mt-0.5">
+          {time.toLocaleDateString('ar-EG', { weekday: 'short', day: 'numeric', month: 'short' })}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 // ======================================================
 // بداية التطبيق الفعلي (المكون الرئيسي App)
 // ======================================================
@@ -54,9 +78,14 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
-  // إعدادات التحكم
+  // إعدادات التحكم (تم إضافة اللوجو هنا ليرتبط بالسحابة)
   const [billetWeight, setBilletWeight] = useState(0.75); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
+  const [customLogo, setCustomLogo] = useState("https://placehold.co/400x150/1e293b/ffffff?text=Al-Gioshy+Steel&font=Montserrat");
+
+  // للتحكم في نافذة الإعدادات
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [tempLogoUrl, setTempLogoUrl] = useState('');
 
   /* ======================================================
     3. الاتصال وجلب البيانات (useEffect)
@@ -87,10 +116,12 @@ export default function App() {
     });
 
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().billetWeight) {
-        setBilletWeight(docSnap.data().billetWeight);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.billetWeight) setBilletWeight(data.billetWeight);
+        if (data.logoUrl) setCustomLogo(data.logoUrl);
       } else {
-        setDoc(settingsRef, { billetWeight: 0.75 });
+        setDoc(settingsRef, { billetWeight: 0.75, logoUrl: customLogo }, { merge: true });
       }
     });
 
@@ -106,7 +137,6 @@ export default function App() {
     const hour = now.getHours();
     const prodDate = new Date(now);
     
-    // إعتبار أن يوم العمل يبدأ الساعة 8 صباحاً. قبل ذلك، يعتبر من اليوم السابق.
     if (hour < 8) prodDate.setDate(prodDate.getDate() - 1);
     
     const isFriday = prodDate.getDay() === 5; 
@@ -143,20 +173,19 @@ export default function App() {
   };
 
   /* ======================================================
-    5. دوال التشغيل (Functions)
+    5. دوال التشغيل والحفظ السحابي
     ======================================================
   */
   const handleProductSizeChange = (size) => {
     setSelectedProductSize(size);
     const newStands = stands.map((stand, index) => {
       let active = true;
-      // تعطيل آخر ستاندين (11 و 12) للمقاسات الكبيرة
       if (['16', '18', '22'].includes(size)) {
         if (index >= 10) active = false; 
       }
       return { ...stand, isActive: active };
     });
-    saveToCloud(newStands, null, billetWeight);
+    saveToCloud(newStands, null, billetWeight, null);
   };
 
   const getStandStatus = (tons, limit) => {
@@ -166,24 +195,46 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  const saveToCloud = async (newStands, newArchive, newWeight) => {
+  // تعديل دالة الحفظ لتدعم حفظ اللوجو مع دمج البيانات (Merge)
+  const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
     if (userAuth && db) {
       try {
-        await setDoc(doc(db, 'factory', appId, 'data', 'standsState'), { standsList: newStands });
+        if (newStands) await setDoc(doc(db, 'factory', appId, 'data', 'standsState'), { standsList: newStands });
         if (newArchive) await setDoc(doc(db, 'factory', appId, 'data', 'archiveState'), { archiveList: newArchive });
-        if (newWeight !== undefined) await setDoc(doc(db, 'factory', appId, 'data', 'settingsState'), { billetWeight: newWeight });
+        
+        const settingsUpdate = {};
+        if (newWeight !== undefined && newWeight !== null) settingsUpdate.billetWeight = newWeight;
+        if (newLogoUrl !== undefined && newLogoUrl !== null) settingsUpdate.logoUrl = newLogoUrl;
+        
+        if (Object.keys(settingsUpdate).length > 0) {
+          await setDoc(doc(db, 'factory', appId, 'data', 'settingsState'), settingsUpdate, { merge: true });
+        }
       } catch (error) { console.error("Save error:", error); }
     } else {
-      setStands(newStands);
+      if (newStands) setStands(newStands);
       if (newArchive) setProductionArchive(newArchive);
-      if (newWeight !== undefined) setBilletWeight(newWeight);
+      if (newWeight !== undefined && newWeight !== null) setBilletWeight(newWeight);
+      if (newLogoUrl !== undefined && newLogoUrl !== null) setCustomLogo(newLogoUrl);
     }
+  };
+
+  // فتح وإغلاق إعدادات النظام
+  const openSettingsModal = () => {
+    setTempLogoUrl(customLogo);
+    setIsSettingsOpen(true);
+  };
+
+  const handleSaveSettings = () => {
+    if (tempLogoUrl.trim() !== '') {
+      saveToCloud(null, null, null, tempLogoUrl.trim());
+    }
+    setIsSettingsOpen(false);
   };
 
   const handleToggleActive = (index) => {
     const newStands = [...stands];
     newStands[index].isActive = !newStands[index].isActive;
-    saveToCloud(newStands, null, billetWeight);
+    saveToCloud(newStands, null, null, null);
   };
 
   const handleResetStand = (index) => {
@@ -191,7 +242,7 @@ export default function App() {
       const newStands = [...stands];
       newStands[index].accumulatedTons = 0;
       newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
-      saveToCloud(newStands, null, billetWeight);
+      saveToCloud(newStands, null, null, null);
     }
   };
 
@@ -202,13 +253,13 @@ export default function App() {
         accumulatedTons: 0,
         lastResetDate: new Date().toLocaleDateString('en-GB')
       }));
-      saveToCloud(newStands, null, billetWeight);
+      saveToCloud(newStands, null, null, null);
     }
   };
 
   const handleClearArchive = () => {
     if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف والإحصائيات القديمة بشكل كامل والبدء من جديد؟')) {
-      saveToCloud(stands, [], billetWeight);
+      saveToCloud(null, [], null, null);
       alert('تم مسح الأرشيف بنجاح.');
     }
   }
@@ -218,19 +269,17 @@ export default function App() {
     if (val > 0) {
       const newStands = [...stands];
       newStands[index].maxLimit = val;
-      saveToCloud(newStands, null, billetWeight);
+      saveToCloud(newStands, null, null, null);
     }
   };
 
   const handleWeightChange = (newVal) => {
     const val = Number(newVal);
     if (val > 0) {
-      setBilletWeight(val);
-      saveToCloud(stands, null, val);
+      saveToCloud(null, null, val, null);
     }
   };
 
-  // الدالة الأساسية: حفظ الإنتاج والانتقال المنظم
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
@@ -240,22 +289,17 @@ export default function App() {
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
     
-    // 1. تحديث أطنان الستاندات الشغالة
     const newStands = stands.map(stand => stand.isActive ? { ...stand, accumulatedTons: stand.accumulatedTons + addedTons } : stand);
     
-    // 2. تحديث أرشيف الإنتاج (تجميع ذكي لنفس الوردية في نفس اليوم)
     let newArchive = [...productionArchive];
     const existingLogIndex = newArchive.findIndex(log => log.date === dateStr && log.shift === selectedShift);
 
     if (existingLogIndex !== -1) {
-      // إذا كانت الوردية مسجلة مسبقاً في هذا اليوم، قم بتحديثها (جمع)
       newArchive[existingLogIndex].billets += billetsCount;
       newArchive[existingLogIndex].tons += addedTons;
-      newArchive[existingLogIndex].time = saveTime; // تحديث لآخر وقت
-      // يمكن ترك مقاس المنتج القديم أو تحديثه للجديد، نعتمد الجديد في حال تم تغييره
+      newArchive[existingLogIndex].time = saveTime; 
       newArchive[existingLogIndex].productSize = selectedProductSize; 
     } else {
-      // وردية جديدة تماماً في هذا اليوم
       const newArchiveLog = { 
         id: Date.now(), 
         date: dateStr, 
@@ -267,20 +311,17 @@ export default function App() {
         productSize: selectedProductSize, 
         timestamp: currentProdDate.getTime() 
       };
-      // وضع الوردية الأحدث في بداية المصفوفة
       newArchive = [newArchiveLog, ...newArchive];
     }
 
-    saveToCloud(newStands, newArchive, billetWeight); 
+    saveToCloud(newStands, newArchive, null, null); 
 
-    // 3. الانتقال الصارم للورديات والأيام
     const currentDayShifts = currentProdDate.getDay() === 5 ? 
        ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
        ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
 
     const currentShiftIndex = currentDayShifts.indexOf(selectedShift);
 
-    // إذا كانت هذه آخر وردية في اليوم، نفتح اليوم الذي يليه
     if (currentShiftIndex === currentDayShifts.length - 1) {
       const nextDate = new Date(currentProdDate);
       nextDate.setDate(nextDate.getDate() + 1);
@@ -288,14 +329,10 @@ export default function App() {
       
       const nextIsFriday = nextDate.getDay() === 5;
       setSelectedShift(nextIsFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
-      alert(`تم إقفال يوم ${dayNameStr} وتسجيل إنتاج ${selectedShift} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+      alert(`تم إقفال يوم ${dayNameStr} وتسجيل إنتاج ${selectedShift} بنجاح!\n\nتم فتح يوم جديد تلقائياً وتجهيز الوردية الأولى.`);
     } else if (currentShiftIndex >= 0) {
-      // انتقال للوردية التالية في نفس اليوم
       setSelectedShift(currentDayShifts[currentShiftIndex + 1]);
-      // رسالة اختيارية للتأكيد على التسجيل والانتقال
-      // alert(`تم تسجيل إنتاج ${selectedShift} بنجاح.\nتم الانتقال للوردية التالية.`);
     } else {
-      // كإجراء احتياطي لو حصل خطأ
       setSelectedShift(currentDayShifts[0]);
     }
     
@@ -303,7 +340,7 @@ export default function App() {
   };
 
   /* ======================================================
-    6. ترتيب وتجميع الأرشيف للعرض (Grouped by Date)
+    6. ترتيب وتجميع الأرشيف للعرض
     ======================================================
   */
   const groupedArchive = productionArchive.reduce((acc, log) => {
@@ -319,12 +356,14 @@ export default function App() {
   const shiftOrder = { 'الوردية الأولى': 1, 'الوردية الأولى (12 ساعة)': 1, 'الوردية الثانية': 2, 'الوردية الثانية (12 ساعة)': 2, 'الوردية الثالثة': 3 };
   
   Object.keys(groupedArchive).forEach(dateKey => {
-    // ترتيب الورديات داخل كل يوم (أولى، ثانية، ثالثة)
     groupedArchive[dateKey].shiftsList.sort((a, b) => shiftOrder[a.shift] - shiftOrder[b.shift]);
   });
   
-  // ترتيب الأيام من الأحدث للأقدم
   const sortedDates = Object.keys(groupedArchive).sort((a, b) => groupedArchive[b].timestamp - groupedArchive[a].timestamp);
+
+  const aggregatedLogs = Object.values(groupedArchive)
+    .flatMap(day => day.shiftsList)
+    .sort((a, b) => b.timestamp - a.timestamp);
 
   /* ======================================================
     7. واجهة المستخدم
@@ -334,21 +373,26 @@ export default function App() {
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
-        <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl">
-          <Settings2 className="w-16 h-16 mx-auto text-blue-500 mb-4" />
-          <h1 className="text-3xl font-black mb-2">تتبع الدرافيل</h1>
+        <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
+          
+          {/* عرض لوجو المصنع في شاشة الدخول */}
+          <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
+            <img src={customLogo} alt="Factory Logo" className="h-16 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/1e293b/ffffff?text=Logo+Error"} />
+          </div>
+          
+          <h1 className="text-2xl font-black mb-2 text-slate-100">تتبع درافيل الإنتاج</h1>
           <p className="text-blue-400 mb-8 text-sm flex items-center justify-center gap-1 font-bold">
-            <CheckCircle className="w-4 h-4" /> جاهز للعمل مع Firebase
+            <CheckCircle className="w-4 h-4" /> نظام متصل بالسحابة
           </p>
           {!isDataLoaded ? (
-            <div className="text-slate-400 animate-pulse text-sm font-bold">جاري التحميل...</div>
+            <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال بقاعدة البيانات...</div>
           ) : (
             <div className="space-y-4">
-              <button onClick={() => setCurrentUser('tech')} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 p-4 rounded-lg font-bold">
-                <Edit3 className="w-5 h-5" /> الفني (إدخال)
+              <button onClick={() => setCurrentUser('tech')} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 p-4 rounded-lg font-bold transition-colors shadow-lg">
+                <Edit3 className="w-5 h-5" /> دخول فني الإنتاج
               </button>
-              <button onClick={() => setCurrentUser('manager')} className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 p-4 rounded-lg font-bold">
-                <TrendingUp className="w-5 h-5" /> الإدارة (مراقبة وأرشيف)
+              <button onClick={() => setCurrentUser('manager')} className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 p-4 rounded-lg font-bold transition-colors shadow-lg">
+                <TrendingUp className="w-5 h-5" /> دخول إدارة المصنع
               </button>
             </div>
           )}
@@ -360,24 +404,73 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none">
+      {/* نافذة إعدادات النظام (تغيير اللوجو) */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
+            <div className="bg-slate-800 p-3 flex justify-between items-center text-white">
+              <h3 className="font-bold text-sm flex items-center gap-2"><Settings className="w-4 h-4"/> إعدادات النظام المتقدمة</h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1"><ImageIcon className="w-4 h-4 text-blue-600"/> رابط لوجو المصنع (URL):</label>
+                <input 
+                  type="text" 
+                  value={tempLogoUrl} 
+                  onChange={e => setTempLogoUrl(e.target.value)} 
+                  className="w-full border border-slate-300 rounded p-2.5 text-left font-mono text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-200 outline-none" 
+                  dir="ltr" 
+                  placeholder="https://..." 
+                />
+                <p className="text-[10px] text-slate-500">ارفع الشعار على أي موقع تخزين (مثل imgur.com) وضع الرابط المباشر هنا ليتم تطبيقه فوراً.</p>
+              </div>
+              
+              {tempLogoUrl && (
+                <div className="bg-slate-100 p-3 rounded-lg border border-slate-200 flex flex-col items-center gap-2">
+                  <span className="text-[9px] font-bold text-slate-400">معاينة الشعار:</span>
+                  <img src={tempLogoUrl} alt="Preview" className="h-12 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/f1f5f9/64748b?text=Invalid+Image"} />
+                </div>
+              )}
+
+              <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md">
+                <Save className="w-4 h-4" /> حفظ الإعدادات
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm">
         <div className="flex justify-between items-center">
-          <div className="flex items-center gap-1">
-            <Settings2 className="w-4 h-4 text-blue-400" />
+          
+          <div className="flex items-center gap-2">
+            {/* اللوجو المصغر في شريط التنقل */}
+            <div className="bg-white/10 p-0.5 rounded backdrop-blur-sm hidden sm:flex">
+               <img src={customLogo} alt="Logo" className="h-6 w-auto max-w-[100px] object-contain" onError={(e) => e.target.src="https://placehold.co/100x30/1e293b/ffffff?text=Logo"} />
+            </div>
             <span className="font-bold text-sm">Roll Tracker</span>
           </div>
+
+          <LiveClock />
+
           <div className="flex items-center gap-2">
-            <span className="bg-slate-800 px-2 py-0.5 rounded text-[10px] font-bold text-blue-300 flex items-center gap-1">
-              <span className={`w-2 h-2 rounded-full ${auth ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`}></span> 
+            {currentUser === 'manager' && (
+               <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 transition-colors shadow-sm" title="إعدادات النظام">
+                 <Settings className="w-3.5 h-3.5 text-blue-300" />
+               </button>
+            )}
+            <span className="bg-slate-800 px-2 py-1 rounded text-[10px] font-bold text-blue-300 flex items-center gap-1 border border-slate-700">
+              <span className={`w-2 h-2 rounded-full ${auth ? 'bg-green-500 shadow-[0_0_5px_#22c55e]' : 'bg-slate-400'}`}></span> 
               {currentUser === 'tech' ? 'فني' : 'مدير'}
             </span>
-            <button onClick={() => {setCurrentUser('none'); setActiveTab('dashboard');}} className="text-red-400 text-xs font-bold">خروج</button>
+            <button onClick={() => {setCurrentUser('none'); setActiveTab('dashboard');}} className="text-red-400 hover:text-red-300 text-xs font-bold transition-colors">خروج</button>
           </div>
         </div>
         <div className="flex gap-2 bg-slate-800 p-1 rounded-lg">
-          <button onClick={() => setActiveTab('dashboard')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'dashboard' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><TrendingUp className="w-3 h-3" /> الداشبورد</button>
-          <button onClick={() => setActiveTab('analytics')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><BarChart3 className="w-3 h-3" /> الإحصائيات</button>
-          <button onClick={() => setActiveTab('archive')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'archive' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Archive className="w-3 h-3" /> التقويم</button>
+          <button onClick={() => setActiveTab('dashboard')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><TrendingUp className="w-3 h-3" /> التشغيل</button>
+          <button onClick={() => setActiveTab('analytics')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><BarChart3 className="w-3 h-3" /> الإحصائيات</button>
+          <button onClick={() => setActiveTab('archive')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'archive' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><Archive className="w-3 h-3" /> الأرشيف</button>
         </div>
       </nav>
 
@@ -442,10 +535,10 @@ export default function App() {
                   />
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                  <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
                     <RefreshCw className="w-3 h-3" /> تصفير الستاندات
                   </button>
-                  <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                  <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
                     <Trash2 className="w-3 h-3" /> مسح الأرشيف
                   </button>
                 </div>
@@ -487,7 +580,6 @@ export default function App() {
         </div>
       )}
 
-      {/* شاشة الإحصائيات التحليلية (الداشبورد الكيرفي) */}
       {activeTab === 'analytics' && (
         <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
           <div className="flex items-center justify-between border-b pb-2">
@@ -497,7 +589,7 @@ export default function App() {
             </div>
           </div>
           
-          {productionArchive.length === 0 ? (
+          {aggregatedLogs.length === 0 ? (
             <div className="text-center py-12 text-slate-400 flex flex-col items-center gap-2">
               <BarChart3 className="w-10 h-10 opacity-30" />
               <p className="text-sm font-bold">لا توجد بيانات إنتاجية مسجلة لعرض الرسومات البيانية بعد.</p>
@@ -508,19 +600,19 @@ export default function App() {
                 <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center">
                   <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
                   <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
-                    {productionArchive.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
+                    {aggregatedLogs.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
                   </p>
                 </div>
                 <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center">
                   <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
                   <p className="font-mono font-black text-lg sm:text-xl text-green-900">
-                    {productionArchive.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
+                    {aggregatedLogs.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
                   </p>
                 </div>
                 <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center">
                   <p className="text-[10px] font-bold text-purple-800">عدد الورديات المسجلة</p>
                   <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
-                    {productionArchive.length}
+                    {aggregatedLogs.length}
                   </p>
                 </div>
               </div>
@@ -541,9 +633,8 @@ export default function App() {
                     </defs>
                     
                     {(() => {
-                      const maxVal = Math.max(...productionArchive.map(l => l.tons), 1);
-                      // نعكس الداتا لعرض الأقدم على اليسار والأحدث على اليمين
-                      const pointsData = [...productionArchive].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
+                      const maxVal = Math.max(...aggregatedLogs.map(l => l.tons), 1);
+                      const pointsData = [...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
                       
                       const points = pointsData.map((log, idx, arr) => {
                         const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
@@ -576,9 +667,8 @@ export default function App() {
               <div className="flex flex-col gap-2">
                 <h3 className="font-bold text-xs text-slate-700">سجل أداء الورديات الإجمالي:</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {/* ترتيب الأرشيف من الأحدث للأقدم للعرض */}
-                  {[...productionArchive].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
-                    <div key={log.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center">
+                  {[...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
+                    <div key={i} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center hover:bg-white transition-colors cursor-default shadow-sm hover:shadow">
                       <div className="flex flex-col">
                         <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
                         <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
@@ -597,7 +687,6 @@ export default function App() {
         </div>
       )}
 
-      {/* شاشة الأرشيف (التقويم - المجمع بشكل منظم) */}
       {activeTab === 'archive' && (
         <div className="flex-1 bg-slate-100 rounded shadow border border-slate-300 p-1.5 overflow-y-auto">
           {sortedDates.length === 0 ? (
@@ -607,7 +696,7 @@ export default function App() {
               {sortedDates.map((date) => {
                 const dayData = groupedArchive[date];
                 return (
-                  <div key={date} className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col overflow-hidden">
+                  <div key={date} className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col overflow-hidden transition-all hover:shadow-md">
                     <div className="bg-slate-800 text-white p-1.5 flex justify-between items-center flex-wrap gap-1">
                       <div className="flex items-center gap-1">
                         <CalendarDays className="w-3 h-3 text-blue-400" />
@@ -624,7 +713,7 @@ export default function App() {
                     </div>
                     <div className="p-1 flex-1 flex flex-col gap-1 bg-white">
                       {dayData.shiftsList.map((log, index) => (
-                        <div key={index} className="flex flex-col sm:flex-row justify-between sm:items-center p-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-100">
+                        <div key={index} className="flex flex-col sm:flex-row justify-between sm:items-center p-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-100 transition-colors">
                           <div className="flex justify-between sm:justify-start items-center sm:flex-col sm:items-start w-full sm:w-auto">
                             <span className="font-bold text-[9px] text-slate-800">{log.shift.replace('الوردية ', '').replace(' (12 ساعة)', '')} (مقاس {log.productSize || '10'} مم)</span>
                             <span className="text-[7px] text-slate-400 font-mono">{log.time}</span>
@@ -638,7 +727,7 @@ export default function App() {
                       ))}
                       {dayData.shiftsList.length < (new Date(dayData.timestamp).getDay() === 5 ? 2 : 3) && (
                          <div className="flex-1 min-h-[25px] border border-dashed border-slate-200 rounded flex items-center justify-center m-0.5 opacity-50">
-                           <span className="text-[8px] font-bold text-slate-400">قيد التشغيل...</span>
+                           <span className="text-[8px] font-bold text-slate-400 animate-pulse">قيد التشغيل...</span>
                          </div>
                       )}
                     </div>
