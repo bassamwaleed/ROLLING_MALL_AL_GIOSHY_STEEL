@@ -40,13 +40,13 @@ const LiveClock = () => {
   }, []);
 
   return (
-    <div className="flex bg-slate-800 border border-slate-700 rounded px-3 py-1 items-center gap-2 shadow-inner">
-      <Clock className="w-4 h-4 text-blue-400" />
+    <div className="flex bg-slate-800 border border-slate-700 rounded px-2 lg:px-3 py-0.5 lg:py-1 items-center gap-1.5 lg:gap-2 shadow-inner">
+      <Clock className="w-3 h-3 lg:w-4 lg:h-4 text-blue-400" />
       <div className="flex flex-col items-center leading-none mt-0.5">
-        <span className="text-xs font-mono font-bold text-slate-100" dir="ltr">
+        <span className="text-[10px] lg:text-xs font-mono font-bold text-slate-100" dir="ltr">
           {time.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
-        <span className="text-[9px] text-slate-400 mt-0.5">
+        <span className="text-[7px] lg:text-[9px] text-slate-400 mt-0.5">
           {time.toLocaleDateString('ar-EG', { weekday: 'short', day: 'numeric', month: 'short' })}
         </span>
       </div>
@@ -302,7 +302,6 @@ export default function App() {
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
     const addedTons = billetsCount * billetWeight; 
-    
     const exactNow = new Date();
     const saveTime = exactNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const exactTimestamp = exactNow.getTime(); 
@@ -814,6 +813,7 @@ export default function App() {
                       <span className="text-[10px] font-bold text-slate-500 px-1">تفاصيل الورديات:</span>
                       {dayData.shiftsList.map((log, index) => (
                         <div key={index} className="flex flex-col sm:flex-row justify-between sm:items-center p-2 bg-white rounded-lg border border-slate-200 shadow-sm transition-colors hover:border-blue-200 relative overflow-hidden group">
+                          {/* تأثير بصري جميل عند الوقوف بالماوس */}
                           <div className="absolute left-0 top-0 bottom-0 w-1 bg-slate-200 group-hover:bg-blue-400 transition-colors"></div>
                           
                           <div className="flex flex-col pl-2 sm:pl-3">
