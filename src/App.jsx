@@ -13,9 +13,13 @@ import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
   هنا ستضع المفاتيح التي سيعطيها لك موقع Firebase لاحقاً
 */
 const firebaseConfig = {
-  // apiKey: "YOUR_API_KEY",
-  // authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  // projectId: "YOUR_PROJECT_ID",
+  apiKey: "AIzaSyC3JM11miWda_leiK0LPViRNVdSZRCQ8N8",
+  authDomain: "khodnimaak.firebaseapp.com",
+  projectId: "khodnimaak",
+  storageBucket: "khodnimaak.firebasestorage.app",
+  messagingSenderId: "883484024405",
+  appId: "1:883484024405:web:d9da90553d82229582bedc",
+  measurementId: "G-7XGRZ863ET"
 };
 
 // تهيئة الاتصال بالسحابة
