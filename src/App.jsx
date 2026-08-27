@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-// استدعاء الأيقونات الجاهزة من مكتبة lucide-react (تم إضافة أيقونات للإحصائيات والوزن)
+// استدعاء الأيقونات الجاهزة من مكتبة lucide-react
 import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders } from 'lucide-react';
 // استدعاء دوال Firebase للاتصال بقاعدة البيانات السحابية
 import { initializeApp } from 'firebase/app';
@@ -59,9 +59,9 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
-  // -- إضافات جديدة للتحكم --
-  const [billetWeight, setBilletWeight] = useState(0.75); // وزن البليت القابل للتعديل
-  const [selectedProductSize, setSelectedProductSize] = useState('10'); // مقاس المنتج لتحديد الستاندات
+  // -- إعدادات التحكم --
+  const [billetWeight, setBilletWeight] = useState(0.75); 
+  const [selectedProductSize, setSelectedProductSize] = useState('10'); 
 
   /* ======================================================
     3. الاتصال وجلب البيانات (useEffect)
@@ -78,7 +78,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
-    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); // جلب إعدادات الوزن
+    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); 
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
       if (docSnap.exists()) setStands(docSnap.data().standsList);
@@ -103,7 +103,7 @@ export default function App() {
   }, [userAuth]);
 
   /* ======================================================
-    4. منطق اليوم الإنتاجي ونظام الورديات
+    4. منطق اليوم الإنتاجي ونظام الورديات وتغيير التواريخ
     ======================================================
   */
   const getInitialProductionState = () => {
@@ -137,18 +137,26 @@ export default function App() {
     if (!availableShifts.includes(selectedShift)) setSelectedShift(availableShifts[0]);
   }, [isFriday]);
 
+  // دالة جديدة: تتيح للفني تغيير اليوم يدوياً للأمام أو للخلف
+  const handleDateChange = (direction) => {
+    const newDate = new Date(currentProdDate);
+    newDate.setDate(newDate.getDate() + direction);
+    setCurrentProdDate(newDate);
+    
+    const isNewFriday = newDate.getDay() === 5;
+    setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
+  };
+
   /* ======================================================
     5. دوال التشغيل (Functions)
     ======================================================
   */
-  
-  // التحكم التلقائي بالستاندات حسب المقاس
   const handleProductSizeChange = (size) => {
     setSelectedProductSize(size);
     const newStands = stands.map((stand, index) => {
       let active = true;
       if (['16', '18', '22'].includes(size)) {
-        if (index >= 10) active = false; // تعطيل الستاندات 11 و 12 للمقاسات الكبيرة
+        if (index >= 10) active = false; 
       }
       return { ...stand, isActive: active };
     });
@@ -182,7 +190,6 @@ export default function App() {
     saveToCloud(newStands, null, billetWeight);
   };
 
-  // تصفير ستاند محدد (للفني والمدير)
   const handleResetStand = (index) => {
     if(window.confirm(`تصفير وتغيير درافيل ستاند رقم ${stands[index].id}؟`)) {
       const newStands = [...stands];
@@ -192,7 +199,6 @@ export default function App() {
     }
   };
 
-  // تصفير كل الستاندات (للمدير فقط)
   const handleResetAllStands = () => {
     if(window.confirm('تحذير: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟')) {
       const newStands = stands.map(stand => ({
@@ -213,7 +219,6 @@ export default function App() {
     }
   };
 
-  // تغيير وزن البليت من قبل المدير
   const handleWeightChange = (newVal) => {
     const val = Number(newVal);
     if (val > 0) {
@@ -222,11 +227,12 @@ export default function App() {
     }
   };
 
+  // الدالة الأساسية: الحفظ والانتقال للوردية التالية
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
-    const addedTons = billetsCount * billetWeight; // تم التعديل لاستخدام الوزن المتغير
+    const addedTons = billetsCount * billetWeight; 
     const saveTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
@@ -241,24 +247,36 @@ export default function App() {
       shift: selectedShift, 
       billets: billetsCount, 
       tons: addedTons, 
-      productSize: selectedProductSize, // حفظ مقاس المنتج في الأرشيف
+      productSize: selectedProductSize, 
       timestamp: currentProdDate.getTime() 
     };
     const newArchive = [newArchiveLog, ...productionArchive];
 
     saveToCloud(newStands, newArchive, billetWeight); 
 
-    const currentShiftIndex = availableShifts.indexOf(selectedShift);
-    if (currentShiftIndex === availableShifts.length - 1) {
+    // منطق متطور ودقيق للانتقال التلقائي بين الورديات والأيام
+    const currentDayShifts = currentProdDate.getDay() === 5 ? 
+       ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
+       ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
+
+    const currentShiftIndex = currentDayShifts.indexOf(selectedShift);
+
+    if (currentShiftIndex === currentDayShifts.length - 1) {
+      // إقفال اليوم الحالي وفتح يوم جديد
       const nextDate = new Date(currentProdDate);
       nextDate.setDate(nextDate.getDate() + 1);
       setCurrentProdDate(nextDate);
+      
       const nextIsFriday = nextDate.getDay() === 5;
       setSelectedShift(nextIsFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
       alert(`تم إقفال يوم ${dayNameStr} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+    } else if (currentShiftIndex >= 0) {
+      // الانتقال للوردية التي تليها في نفس اليوم
+      setSelectedShift(currentDayShifts[currentShiftIndex + 1]);
     } else {
-      setSelectedShift(availableShifts[currentShiftIndex + 1]);
+      setSelectedShift(currentDayShifts[0]);
     }
+    
     setShiftBillets(''); 
   };
 
@@ -312,7 +330,6 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      {/* الشريط العلوي */}
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-1">
@@ -334,13 +351,11 @@ export default function App() {
         </div>
       </nav>
 
-      {/* شاشة الداشبورد (لوحة التحكم) */}
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
           
-          {/* اختيار مقاس المنتج */}
           <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs">
-            <span className="font-bold text-slate-700">المنتج الحالي:</span>
+            <span className="font-bold text-slate-700">مقاس المنتج الحالي:</span>
             <div className="flex gap-1">
               {['10', '12', '16', '18', '22'].map((size) => (
                 <button
@@ -354,13 +369,18 @@ export default function App() {
             </div>
           </div>
 
-          {/* جزء الإدخال الخاص بالفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
-              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold px-2 py-1 rounded flex justify-between items-center">
-                <span>تسجيل: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | البليت: {billetWeight} طن)</span>
-                <span className="font-mono">{currentProdDate.toLocaleDateString('en-GB')}</span>
+              {/* شريط التاريخ بأزرار التحكم اليدوية */}
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
+                <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
+                <div className="flex flex-col items-center">
+                   <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | وزن: {billetWeight} طن)</span>
+                   <span className="font-mono text-[11px] text-blue-600">{currentProdDate.toLocaleDateString('en-GB')}</span>
+                </div>
+                <button onClick={() => handleDateChange(1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم تالي</button>
               </div>
+
               <div className="flex gap-1 items-center">
                 <input type="number" value={shiftBillets} onChange={(e) => setShiftBillets(e.target.value)} className="flex-1 p-1.5 border border-slate-400 rounded font-mono text-center text-lg font-bold outline-none" placeholder="عدد البليت" />
                 <select value={selectedShift} onChange={(e) => setSelectedShift(e.target.value)} className="w-1/2 bg-slate-100 border border-slate-400 text-[11px] font-bold p-2 rounded outline-none focus:border-blue-500">
@@ -373,7 +393,6 @@ export default function App() {
             </div>
           )}
 
-          {/* ملخص الإحصائيات وإعدادات المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -381,11 +400,10 @@ export default function App() {
                  <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
                  <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
               </div>
-              {/* إعدادات وزن البليت وتصفير الكل */}
               <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
                 <div className="flex items-center gap-1.5">
                   <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
+                  <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
                   <input 
                     type="number" 
                     step="0.01" 
@@ -401,7 +419,6 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -410,20 +427,17 @@ export default function App() {
               return (
                 <div key={idx} className={`rounded flex flex-col justify-between border ${stand.isActive ? status.bg : 'bg-slate-300 opacity-60'} ${status.border} p-1 relative overflow-hidden`}>
                   <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-300/50"><div className={`h-full ${status.bar}`} style={{width: `${percentage}%`}}></div></div>
-                  
                   <div className="flex justify-between items-center z-10">
                     <span className="font-black text-xs">St. {stand.id}</span>
                     {currentUser === 'tech' ? (
                       <button onClick={() => handleToggleActive(idx)} className={`p-1 rounded ${stand.isActive ? 'text-green-600 bg-white/50' : 'text-slate-500 bg-black/10'}`}><Power className="w-3 h-3" /></button>
                     ) : (status.color === 'danger' && <AlertTriangle className="w-3 h-3 text-red-500 animate-ping" />)}
                   </div>
-                  
                   <div className="flex flex-col items-center justify-center flex-1 z-10">
                     <span className={`font-mono font-black text-xl md:text-3xl leading-none ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
                     <span className="text-[9px] font-bold opacity-70 mt-1">{currentUser === 'tech' ? `من ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
                   </div>
                   
-                  {/* أزرار التحكم الفردي للستاند */}
                   {currentUser === 'tech' ? (
                     <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1 bg-slate-800 text-white text-[9px] font-bold rounded z-10 active:scale-95">تصفير الدرفيل</button>
                   ) : (
@@ -439,13 +453,12 @@ export default function App() {
         </div>
       )}
 
-      {/* شاشة الإحصائيات التحليلية (الداشبورد الكيرفي) */}
       {activeTab === 'analytics' && (
         <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
           <div className="flex items-center justify-between border-b pb-2">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-blue-600" />
-              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات وتحليل الإنتاجية</h2>
+              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات والتحليل البياني</h2>
             </div>
             <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">تحليل حقيقي</span>
           </div>
@@ -478,7 +491,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* الرسم البياني الكيرفي */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
@@ -524,7 +536,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* تفاصيل الإنتاج */}
               <div className="flex flex-col gap-2">
                 <h3 className="font-bold text-xs text-slate-700">تفاصيل أداء الورديات ومقاسات الحديد:</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -548,7 +559,6 @@ export default function App() {
         </div>
       )}
 
-      {/* شاشة الأرشيف (التقويم) */}
       {activeTab === 'archive' && (
         <div className="flex-1 bg-slate-100 rounded shadow border border-slate-300 p-1.5 overflow-y-auto">
           {sortedDates.length === 0 ? (
