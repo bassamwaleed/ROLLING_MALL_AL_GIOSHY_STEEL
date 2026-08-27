@@ -30,9 +30,7 @@ try {
   console.error("Firebase init error:", error);
 }
 
-// ======================================================
-// مكون الساعة الحية
-// ======================================================
+// مكون فرعي للساعة الحية
 const LiveClock = () => {
   const [time, setTime] = useState(new Date());
   
@@ -87,7 +85,7 @@ export default function App() {
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
   /* ======================================================
-    3. جلب البيانات من Firebase
+    3. الاتصال وجلب البيانات (useEffect)
     ======================================================
   */
   useEffect(() => {
@@ -128,7 +126,7 @@ export default function App() {
   }, [userAuth]);
 
   /* ======================================================
-    4. منطق الورديات واليوم الإنتاجي
+    4. منطق اليوم الإنتاجي ونظام الورديات
     ======================================================
   */
   const getInitialProductionState = () => {
@@ -399,8 +397,8 @@ export default function App() {
         <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           
           {customLogo ? (
-            <div className="w-full flex justify-center mb-6 bg-white p-2 rounded-lg border border-white/10 shadow-sm">
-              <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" />
+            <div className="w-full flex justify-center mb-6 bg-white p-2 rounded-lg shadow-sm">
+              <img src={customLogo} alt="Factory Logo" className="h-16 object-contain drop-shadow-md" />
             </div>
           ) : (
             <Settings2 className="w-16 h-16 mx-auto text-blue-500 mb-4" />
@@ -470,23 +468,27 @@ export default function App() {
         </div>
       )}
 
-      {/* الشريط العلوي (اللوجو والساعة) */}
+      {/* الشريط العلوي (تم ضبط التوسيط والظهور على الموبايل هنا) */}
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center relative h-10">
           
-          <div className="flex items-center gap-2">
-            {/* اللوجو بخلفية بيضاء */}
+          {/* الجانب الأيمن (اللوجو) */}
+          <div className="flex items-center gap-2 z-10">
             {customLogo && (
-              <div className="bg-white p-1 rounded shadow-sm hidden sm:flex">
-                 <img src={customLogo} alt="Logo" className="h-8 w-auto max-w-[120px] object-contain" />
+              <div className="bg-white p-1 rounded shadow-sm flex shrink-0">
+                 <img src={customLogo} alt="Logo" className="h-5 sm:h-7 w-auto max-w-[70px] sm:max-w-[120px] object-contain" />
               </div>
             )}
-            <span className="font-bold text-sm hidden sm:inline text-slate-100">Roll Tracker</span>
+            <span className="font-bold text-xs sm:text-sm hidden md:inline text-slate-100">Roll Tracker</span>
           </div>
 
-          <LiveClock />
+          {/* المنتصف (الساعة) */}
+          <div className="absolute left-1/2 -translate-x-1/2 z-0">
+            <LiveClock />
+          </div>
 
-          <div className="flex items-center gap-2">
+          {/* الجانب الأيسر (التحكم) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 z-10">
             {currentUser === 'manager' && (
                <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 transition-colors shadow-sm" title="إعدادات النظام">
                  <Settings className="w-3.5 h-3.5 text-blue-300" />
@@ -500,15 +502,14 @@ export default function App() {
           </div>
         </div>
 
-        {/* شريط التنقل + قائمة مقاس المنتج (لتوفير المساحة) */}
-        <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center">
+        {/* شريط التنقل + قائمة مقاس المنتج */}
+        <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center z-10 relative">
           <div className="flex gap-2 w-full sm:w-auto">
              <button onClick={() => setActiveTab('dashboard')} className={`flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><TrendingUp className="w-3 h-3" /> التشغيل</button>
              <button onClick={() => setActiveTab('analytics')} className={`flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><BarChart3 className="w-3 h-3" /> الإحصائيات</button>
              <button onClick={() => setActiveTab('archive')} className={`flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'archive' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><Archive className="w-3 h-3" /> الأرشيف</button>
           </div>
 
-          {/* القائمة المنسدلة لمقاس المنتج (لتوفير مساحة في الداشبورد) */}
           {activeTab === 'dashboard' && (
              <div className="flex items-center gap-2 w-full sm:w-auto bg-slate-700 px-2 py-1 rounded border border-slate-600">
                <span className="text-white text-xs font-bold whitespace-nowrap">مقاس المنتج:</span>
@@ -532,7 +533,7 @@ export default function App() {
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-2 flex-1 overflow-hidden p-1">
           
-          {/* لوحة تحكم المدير (تم رفعها لأعلى) */}
+          {/* لوحة تحكم المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded-lg border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -564,7 +565,7 @@ export default function App() {
             </div>
           )}
 
-          {/* لوحة تسجيل الفني (تم تجميع الإدخال في سطر واحد لتوفير المساحة) */}
+          {/* لوحة تسجيل الفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-2 rounded-lg shadow-sm flex flex-col flex-none border border-slate-300 gap-2">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1.5 rounded flex justify-between items-center">
@@ -583,7 +584,6 @@ export default function App() {
                 <button onClick={() => handleDateChange(1)} className="px-3 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم تالي</button>
               </div>
 
-              {/* سطر الإدخال المدمج (Input + Select + Save Button) */}
               <div className="flex flex-row gap-1 items-stretch w-full">
                 <input 
                   type="number" 
@@ -609,7 +609,7 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات المتسعة (Grid) */}
+          {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-1">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -627,7 +627,6 @@ export default function App() {
                   </div>
                   
                   <div className="flex flex-col items-center justify-center flex-1 z-10 py-2">
-                    {/* تكبير خط الأطنان */}
                     <span className={`font-mono font-black text-3xl sm:text-4xl leading-none tracking-tighter ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
                     <span className="text-[10px] sm:text-xs font-bold opacity-75 mt-1 sm:mt-2 text-slate-600">{currentUser === 'tech' ? `الهدف: ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
                   </div>
