@@ -4,14 +4,8 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-// ---------------------------------------------------------
-// إعدادات Firebase 
-// (ضع مفاتيحك الخاصة هنا لاحقاً عندما تنشئ حساب Firebase)
-// ---------------------------------------------------------
 const firebaseConfig = {
-  // apiKey: "YOUR_API_KEY",
-  // authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  // projectId: "YOUR_PROJECT_ID",
+  // سيتم وضع مفاتيح Firebase هنا لاحقاً
 };
 
 let app, auth, db;
@@ -30,7 +24,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [userAuth, setUserAuth] = useState(null);
   const BILLET_WEIGHT = 0.75; 
-  const appId = 'my-factory-app'; // يمكنك تغييره
+  const appId = 'al-gioshy-steel-rolls'; 
 
   const initialStands = Array.from({ length: 12 }, (_, i) => ({
     id: i + 1, isActive: true, accumulatedTons: 0, maxLimit: 1000, lastResetDate: new Date().toLocaleDateString('en-GB')
@@ -43,7 +37,6 @@ export default function App() {
 
   useEffect(() => {
     if (!auth) { setIsDataLoaded(true); return; }
-    
     signInAnonymously(auth).catch(e => console.error(e));
     const unsubscribeAuth = onAuthStateChanged(auth, setUserAuth);
     return () => unsubscribeAuth();
@@ -51,7 +44,6 @@ export default function App() {
 
   useEffect(() => {
     if (!userAuth || !db) return;
-    
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
 
@@ -74,10 +66,8 @@ export default function App() {
     const hour = now.getHours();
     const prodDate = new Date(now);
     if (hour < 8) prodDate.setDate(prodDate.getDate() - 1);
-    
     const isFriday = prodDate.getDay() === 5;
     let initialShift = '';
-    
     if (isFriday) {
       initialShift = (hour >= 8 && hour < 20) ? 'الوردية الأولى (12 ساعة)' : 'الوردية الثانية (12 ساعة)';
     } else {
