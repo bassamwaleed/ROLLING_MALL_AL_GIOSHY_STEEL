@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
-// استدعاء الأيقونات الجاهزة
 import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud } from 'lucide-react';
-// استدعاء دوال Firebase
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -32,9 +30,7 @@ try {
   console.error("Firebase init error:", error);
 }
 
-// ======================================================
-// مكون الساعة الحية (المنفصل للحفاظ على الأداء)
-// ======================================================
+// مكون فرعي للساعة الحية
 const LiveClock = () => {
   const [time, setTime] = useState(new Date());
   
@@ -85,7 +81,7 @@ export default function App() {
   // إعدادات التحكم واللوجو
   const [billetWeight, setBilletWeight] = useState(0.75); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
-  const [customLogo, setCustomLogo] = useState(""); // اللوجو المرفوع
+  const [customLogo, setCustomLogo] = useState(""); 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
@@ -139,7 +135,6 @@ export default function App() {
     const hour = now.getHours();
     const prodDate = new Date(now);
     
-    // نظام المصنع: اليوم يقلب الساعة 8 صباحاً (قبلها يُحسب على اليوم السابق)
     if (hour < 8) prodDate.setDate(prodDate.getDate() - 1);
     
     const isFriday = prodDate.getDay() === 5; 
@@ -166,7 +161,6 @@ export default function App() {
     if (!availableShifts.includes(selectedShift)) setSelectedShift(availableShifts[0]);
   }, [isFriday]);
 
-  // تغيير اليوم يدوياً للأمام والخلف
   const handleDateChange = (direction) => {
     const newDate = new Date(currentProdDate);
     newDate.setDate(newDate.getDate() + direction);
@@ -176,10 +170,9 @@ export default function App() {
     setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
   };
 
-  // العودة لتاريخ ووقت اللحظة الحالية بقوة
   const handleGoToToday = () => {
     const state = getInitialProductionState();
-    setCurrentProdDate(new Date(state.prodDate.getTime())); // Force re-render
+    setCurrentProdDate(new Date(state.prodDate.getTime())); 
     setSelectedShift(state.initialShift);
   };
 
@@ -206,7 +199,6 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  // دالة الحفظ السحابي المركزية (تم دعم تحديث اللوجو)
   const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
     if (userAuth && db) {
       try {
@@ -229,11 +221,9 @@ export default function App() {
     }
   };
 
-  // رفع اللوجو كصورة (Base64)
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // التأكد من حجم الصورة حتى لا تثقل قاعدة البيانات (حد أقصى ~1 ميجا)
       if (file.size > 1024 * 1024) {
         alert("حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 1 ميجابايت.");
         return;
@@ -269,7 +259,7 @@ export default function App() {
   };
 
   const handleResetAllStands = () => {
-    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟ (هذا الإجراء لا يمكن التراجع عنه)')) {
+    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟')) {
       const newStands = stands.map(stand => ({
         ...stand,
         accumulatedTons: 0,
@@ -302,14 +292,11 @@ export default function App() {
     }
   };
 
-  // الدالة الأساسية: التسجيل والربط بالوقت الفعلي الدقيق
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
     const addedTons = billetsCount * billetWeight; 
-    
-    // ** الحصول على الوقت الفعلي في لحظة الضغط على الحفظ **
     const exactNow = new Date();
     const saveTime = exactNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const exactTimestamp = exactNow.getTime(); 
@@ -323,10 +310,9 @@ export default function App() {
     const existingLogIndex = newArchive.findIndex(log => log.date === dateStr && log.shift === selectedShift);
 
     if (existingLogIndex !== -1) {
-      // تجميع البيانات في حالة التسجيل أكثر من مرة في نفس الوردية
       newArchive[existingLogIndex].billets += billetsCount;
       newArchive[existingLogIndex].tons += addedTons;
-      newArchive[existingLogIndex].time = saveTime; // تحديث الوقت لآخر لحظة تسجيل
+      newArchive[existingLogIndex].time = saveTime; 
       newArchive[existingLogIndex].productSize = selectedProductSize; 
       newArchive[existingLogIndex].timestamp = exactTimestamp; 
     } else {
@@ -346,7 +332,6 @@ export default function App() {
 
     saveToCloud(newStands, newArchive, null, null); 
 
-    // الانتقال الصارم للورديات
     const currentDayShifts = currentProdDate.getDay() === 5 ? 
        ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
        ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
@@ -407,7 +392,6 @@ export default function App() {
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
         <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           
-          {/* عرض اللوجو المرفوع */}
           {customLogo ? (
             <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
               <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" />
@@ -518,7 +502,6 @@ export default function App() {
           
           <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
             <div className="flex items-center gap-3 shrink-0">
-               {/* اللوجو في صفحة المتابعة */}
                {customLogo && <img src={customLogo} alt="Dashboard Logo" className="h-8 md:h-10 object-contain drop-shadow-sm" />}
                <div className="w-px h-6 bg-slate-300 hidden sm:block"></div>
                <span className="font-bold text-slate-700 hidden sm:inline">مقاس المنتج:</span>
@@ -536,13 +519,13 @@ export default function App() {
             </div>
           </div>
 
+          {/* شاشة الفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
                 
                 <div className="flex items-center gap-2">
-                  {/* زرار العودة لـ "الآن" المحدث */}
                   <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center" title="تحديث لتاريخ ووقت اللحظة الحالية">
                     الآن <RotateCcw className="w-3 h-3"/>
                   </button>
@@ -567,6 +550,7 @@ export default function App() {
             </div>
           )}
 
+          {/* شاشة المدير (تم إصلاح الخلل في التنسيق هنا) */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -574,10 +558,11 @@ export default function App() {
                  <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
                  <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
               </div>
-              <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-200">
-                <div className="flex items-center gap-1">
+              
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200">
+                <div className="flex items-center gap-1 shrink-0">
                   <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-[10px] font-bold text-slate-700">الوزن (طن):</span>
+                  <span className="text-[10px] font-bold text-slate-700">الوزن:</span>
                   <input 
                     type="number" 
                     step="0.01" 
@@ -586,7 +571,7 @@ export default function App() {
                     className="w-14 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" 
                   />
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-1 shrink-0">
                   <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
                     <RefreshCw className="w-3 h-3" /> تصفير الستاندات
                   </button>
@@ -598,6 +583,7 @@ export default function App() {
             </div>
           )}
 
+          {/* شبكة الستاندات (Grid) */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
