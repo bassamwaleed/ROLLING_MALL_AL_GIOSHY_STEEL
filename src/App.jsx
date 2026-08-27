@@ -1,14 +1,11 @@
 import React, { useState, useEffect } from 'react';
-// استدعاء الأيقونات الجاهزة من مكتبة lucide-react
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List } from 'lucide-react';
-// استدعاء دوال Firebase للاتصال بقاعدة البيانات السحابية
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-/* 
-  ======================================================
-  1. منطقة إعدادات قاعدة البيانات (Firebase) - المشروع الجديد
+/* ======================================================
+  1. منطقة إعدادات قاعدة البيانات (Firebase)
   ======================================================
 */
 const firebaseConfig = {
@@ -22,7 +19,6 @@ const firebaseConfig = {
   measurementId: "G-3XR8MT7T3S"
 };
 
-// تهيئة الاتصال بالسحابة
 let app, auth, db;
 try {
   if (Object.keys(firebaseConfig).length > 0) {
@@ -38,32 +34,31 @@ try {
 // بداية التطبيق الفعلي (المكون الرئيسي App)
 // ======================================================
 export default function App() {
-  /* 
-    2. منطقة المتغيرات الحية (State) - تشبه الـ Registers
-  */
-  const [currentUser, setCurrentUser] = useState('none'); // يحدد من فاتح التطبيق: 'none' أو 'tech' أو 'manager'
-  const [activeTab, setActiveTab] = useState('dashboard'); // يحدد الشاشة المفتوحة: 'dashboard' أو 'archive'
-  const [userAuth, setUserAuth] = useState(null); // حالة تسجيل الدخول في السحابة
+  /* 2. منطقة المتغيرات الحية (State) */
+  const [currentUser, setCurrentUser] = useState('none'); 
+  const [activeTab, setActiveTab] = useState('dashboard'); 
+  const [userAuth, setUserAuth] = useState(null); 
   
-  const BILLET_WEIGHT = 0.75; // وزن البليت بالطن
-  const appId = 'al-gioshy-steel-rolls'; // اسم قاعدة بياناتك
+  const appId = 'al-gioshy-steel-rolls'; 
 
-  // تهيئة الـ 12 ستاند كبيانات مبدئية
   const initialStands = Array.from({ length: 12 }, (_, i) => ({
     id: i + 1, 
-    isActive: true, // شغال ولا واقف
-    accumulatedTons: 0, // إجمالي الأطنان
-    maxLimit: 1000, // الهدف (الماكسيموم)
+    isActive: true, 
+    accumulatedTons: 0, 
+    maxLimit: 1000, 
     lastResetDate: new Date().toLocaleDateString('en-GB')
   }));
 
   const [stands, setStands] = useState(initialStands);
-  const [shiftBillets, setShiftBillets] = useState(''); // الرقم الذي يكتبه الفني في المربع
-  const [productionArchive, setProductionArchive] = useState([]); // سجل الإنتاجية
-  const [isDataLoaded, setIsDataLoaded] = useState(false); // مؤشر تحميل البيانات
+  const [shiftBillets, setShiftBillets] = useState(''); 
+  const [productionArchive, setProductionArchive] = useState([]); 
+  const [isDataLoaded, setIsDataLoaded] = useState(false); 
+  
+  // إعدادات التحكم
+  const [billetWeight, setBilletWeight] = useState(0.75); 
+  const [selectedProductSize, setSelectedProductSize] = useState('10'); 
 
-  /* 
-    ======================================================
+  /* ======================================================
     3. الاتصال وجلب البيانات (useEffect)
     ======================================================
   */
@@ -78,6 +73,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
+    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); 
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
       if (docSnap.exists()) setStands(docSnap.data().standsList);
@@ -90,11 +86,18 @@ export default function App() {
       else setDoc(archiveRef, { archiveList: [] });
     });
 
-    return () => { unsubStands(); unsubArchive(); };
+    const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+      if (docSnap.exists() && docSnap.data().billetWeight) {
+        setBilletWeight(docSnap.data().billetWeight);
+      } else {
+        setDoc(settingsRef, { billetWeight: 0.75 });
+      }
+    });
+
+    return () => { unsubStands(); unsubArchive(); unsubSettings(); };
   }, [userAuth]);
 
-  /* 
-    ======================================================
+  /* ======================================================
     4. منطق اليوم الإنتاجي ونظام الورديات
     ======================================================
   */
@@ -103,6 +106,7 @@ export default function App() {
     const hour = now.getHours();
     const prodDate = new Date(now);
     
+    // إعتبار أن يوم العمل يبدأ الساعة 8 صباحاً. قبل ذلك، يعتبر من اليوم السابق.
     if (hour < 8) prodDate.setDate(prodDate.getDate() - 1);
     
     const isFriday = prodDate.getDay() === 5; 
@@ -129,11 +133,32 @@ export default function App() {
     if (!availableShifts.includes(selectedShift)) setSelectedShift(availableShifts[0]);
   }, [isFriday]);
 
-  /* 
-    ======================================================
+  const handleDateChange = (direction) => {
+    const newDate = new Date(currentProdDate);
+    newDate.setDate(newDate.getDate() + direction);
+    setCurrentProdDate(newDate);
+    
+    const isNewFriday = newDate.getDay() === 5;
+    setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
+  };
+
+  /* ======================================================
     5. دوال التشغيل (Functions)
     ======================================================
   */
+  const handleProductSizeChange = (size) => {
+    setSelectedProductSize(size);
+    const newStands = stands.map((stand, index) => {
+      let active = true;
+      // تعطيل آخر ستاندين (11 و 12) للمقاسات الكبيرة
+      if (['16', '18', '22'].includes(size)) {
+        if (index >= 10) active = false; 
+      }
+      return { ...stand, isActive: active };
+    });
+    saveToCloud(newStands, null, billetWeight);
+  };
+
   const getStandStatus = (tons, limit) => {
     const percentage = (tons / limit) * 100;
     if (percentage >= 100) return { color: 'danger', bg: 'bg-red-100', border: 'border-red-500', bar: 'bg-red-600', text: 'text-red-700' };
@@ -141,93 +166,171 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  const saveToCloud = async (newStands, newArchive) => {
+  const saveToCloud = async (newStands, newArchive, newWeight) => {
     if (userAuth && db) {
       try {
         await setDoc(doc(db, 'factory', appId, 'data', 'standsState'), { standsList: newStands });
         if (newArchive) await setDoc(doc(db, 'factory', appId, 'data', 'archiveState'), { archiveList: newArchive });
+        if (newWeight !== undefined) await setDoc(doc(db, 'factory', appId, 'data', 'settingsState'), { billetWeight: newWeight });
       } catch (error) { console.error("Save error:", error); }
     } else {
       setStands(newStands);
       if (newArchive) setProductionArchive(newArchive);
+      if (newWeight !== undefined) setBilletWeight(newWeight);
     }
   };
 
   const handleToggleActive = (index) => {
     const newStands = [...stands];
     newStands[index].isActive = !newStands[index].isActive;
-    saveToCloud(newStands, null);
+    saveToCloud(newStands, null, billetWeight);
   };
 
   const handleResetStand = (index) => {
-    if(window.confirm(`تصفير وتغيير درافيل ستاند رقم ${stands[index].id}؟`)) {
+    if(window.confirm(`هل أنت متأكد من تصفير وتغيير درافيل ستاند رقم ${stands[index].id}؟`)) {
       const newStands = [...stands];
       newStands[index].accumulatedTons = 0;
       newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
-      saveToCloud(newStands, null);
+      saveToCloud(newStands, null, billetWeight);
     }
   };
+
+  const handleResetAllStands = () => {
+    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟ (هذا الإجراء لا يمكن التراجع عنه)')) {
+      const newStands = stands.map(stand => ({
+        ...stand,
+        accumulatedTons: 0,
+        lastResetDate: new Date().toLocaleDateString('en-GB')
+      }));
+      saveToCloud(newStands, null, billetWeight);
+    }
+  };
+
+  const handleClearArchive = () => {
+    if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف والإحصائيات القديمة بشكل كامل والبدء من جديد؟')) {
+      saveToCloud(stands, [], billetWeight);
+      alert('تم مسح الأرشيف بنجاح.');
+    }
+  }
 
   const handleLimitChange = (index, newValue) => {
     const val = Number(newValue);
     if (val > 0) {
       const newStands = [...stands];
       newStands[index].maxLimit = val;
-      saveToCloud(newStands, null);
+      saveToCloud(newStands, null, billetWeight);
     }
   };
 
+  const handleWeightChange = (newVal) => {
+    const val = Number(newVal);
+    if (val > 0) {
+      setBilletWeight(val);
+      saveToCloud(stands, null, val);
+    }
+  };
+
+  // الدالة الأساسية: حفظ الإنتاج والانتقال المنظم
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
-    if (billetsCount <= 0 || isNaN(billetsCount)) return;
+    if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
-    const addedTons = billetsCount * BILLET_WEIGHT;
+    const addedTons = billetsCount * billetWeight; 
     const saveTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
     
+    // 1. تحديث أطنان الستاندات الشغالة
     const newStands = stands.map(stand => stand.isActive ? { ...stand, accumulatedTons: stand.accumulatedTons + addedTons } : stand);
-    const newArchiveLog = { id: Date.now(), date: dateStr, dayName: dayNameStr, time: saveTime, shift: selectedShift, billets: billetsCount, tons: addedTons, timestamp: currentProdDate.getTime() };
-    const newArchive = [newArchiveLog, ...productionArchive];
+    
+    // 2. تحديث أرشيف الإنتاج (تجميع ذكي لنفس الوردية في نفس اليوم)
+    let newArchive = [...productionArchive];
+    const existingLogIndex = newArchive.findIndex(log => log.date === dateStr && log.shift === selectedShift);
 
-    saveToCloud(newStands, newArchive);
+    if (existingLogIndex !== -1) {
+      // إذا كانت الوردية مسجلة مسبقاً في هذا اليوم، قم بتحديثها (جمع)
+      newArchive[existingLogIndex].billets += billetsCount;
+      newArchive[existingLogIndex].tons += addedTons;
+      newArchive[existingLogIndex].time = saveTime; // تحديث لآخر وقت
+      // يمكن ترك مقاس المنتج القديم أو تحديثه للجديد، نعتمد الجديد في حال تم تغييره
+      newArchive[existingLogIndex].productSize = selectedProductSize; 
+    } else {
+      // وردية جديدة تماماً في هذا اليوم
+      const newArchiveLog = { 
+        id: Date.now(), 
+        date: dateStr, 
+        dayName: dayNameStr, 
+        time: saveTime, 
+        shift: selectedShift, 
+        billets: billetsCount, 
+        tons: addedTons, 
+        productSize: selectedProductSize, 
+        timestamp: currentProdDate.getTime() 
+      };
+      // وضع الوردية الأحدث في بداية المصفوفة
+      newArchive = [newArchiveLog, ...newArchive];
+    }
 
-    const currentShiftIndex = availableShifts.indexOf(selectedShift);
-    if (currentShiftIndex === availableShifts.length - 1) {
+    saveToCloud(newStands, newArchive, billetWeight); 
+
+    // 3. الانتقال الصارم للورديات والأيام
+    const currentDayShifts = currentProdDate.getDay() === 5 ? 
+       ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
+       ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
+
+    const currentShiftIndex = currentDayShifts.indexOf(selectedShift);
+
+    // إذا كانت هذه آخر وردية في اليوم، نفتح اليوم الذي يليه
+    if (currentShiftIndex === currentDayShifts.length - 1) {
       const nextDate = new Date(currentProdDate);
       nextDate.setDate(nextDate.getDate() + 1);
       setCurrentProdDate(nextDate);
+      
       const nextIsFriday = nextDate.getDay() === 5;
       setSelectedShift(nextIsFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
-      alert(`تم إقفال يوم ${dayNameStr} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+      alert(`تم إقفال يوم ${dayNameStr} وتسجيل إنتاج ${selectedShift} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+    } else if (currentShiftIndex >= 0) {
+      // انتقال للوردية التالية في نفس اليوم
+      setSelectedShift(currentDayShifts[currentShiftIndex + 1]);
+      // رسالة اختيارية للتأكيد على التسجيل والانتقال
+      // alert(`تم تسجيل إنتاج ${selectedShift} بنجاح.\nتم الانتقال للوردية التالية.`);
     } else {
-      setSelectedShift(availableShifts[currentShiftIndex + 1]);
+      // كإجراء احتياطي لو حصل خطأ
+      setSelectedShift(currentDayShifts[0]);
     }
+    
     setShiftBillets(''); 
   };
 
-  /* 
-    ======================================================
-    6. ترتيب وتجميع الأرشيف
+  /* ======================================================
+    6. ترتيب وتجميع الأرشيف للعرض (Grouped by Date)
     ======================================================
   */
   const groupedArchive = productionArchive.reduce((acc, log) => {
-    if (!acc[log.date]) acc[log.date] = { dayName: log.dayName, totalBillets: 0, totalTons: 0, shifts: [], timestamp: log.timestamp };
+    if (!acc[log.date]) {
+      acc[log.date] = { dayName: log.dayName, totalBillets: 0, totalTons: 0, shiftsList: [], timestamp: log.timestamp };
+    }
     acc[log.date].totalBillets += log.billets;
     acc[log.date].totalTons += log.tons;
-    acc[log.date].shifts.push(log);
+    acc[log.date].shiftsList.push(log);
     return acc;
   }, {});
 
   const shiftOrder = { 'الوردية الأولى': 1, 'الوردية الأولى (12 ساعة)': 1, 'الوردية الثانية': 2, 'الوردية الثانية (12 ساعة)': 2, 'الوردية الثالثة': 3 };
-  Object.keys(groupedArchive).forEach(dateKey => groupedArchive[dateKey].shifts.sort((a, b) => shiftOrder[a.shift] - shiftOrder[b.shift]));
+  
+  Object.keys(groupedArchive).forEach(dateKey => {
+    // ترتيب الورديات داخل كل يوم (أولى، ثانية، ثالثة)
+    groupedArchive[dateKey].shiftsList.sort((a, b) => shiftOrder[a.shift] - shiftOrder[b.shift]);
+  });
+  
+  // ترتيب الأيام من الأحدث للأقدم
   const sortedDates = Object.keys(groupedArchive).sort((a, b) => groupedArchive[b].timestamp - groupedArchive[a].timestamp);
 
-  /* 
-    ======================================================
-    7. واجهة المستخدم (HTML & Tailwind CSS)
+  /* ======================================================
+    7. واجهة المستخدم
     ======================================================
   */
+  
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
@@ -256,6 +359,7 @@ export default function App() {
 
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
+      
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-1">
@@ -272,20 +376,42 @@ export default function App() {
         </div>
         <div className="flex gap-2 bg-slate-800 p-1 rounded-lg">
           <button onClick={() => setActiveTab('dashboard')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'dashboard' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><TrendingUp className="w-3 h-3" /> الداشبورد</button>
+          <button onClick={() => setActiveTab('analytics')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><BarChart3 className="w-3 h-3" /> الإحصائيات</button>
           <button onClick={() => setActiveTab('archive')} className={`flex-1 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'archive' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}><Archive className="w-3 h-3" /> التقويم</button>
         </div>
       </nav>
 
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
+          
+          <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs overflow-x-auto whitespace-nowrap">
+            <span className="font-bold text-slate-700 ml-2">مقاس المنتج الحالي:</span>
+            <div className="flex gap-1">
+              {['10', '12', '16', '18', '22'].map((size) => (
+                <button
+                  key={size}
+                  onClick={() => handleProductSizeChange(size)}
+                  className={`px-2.5 py-1 rounded font-bold transition-all shrink-0 ${selectedProductSize === size ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200'}`}
+                >
+                  {size} مم
+                </button>
+              ))}
+            </div>
+          </div>
+
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
-              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold px-2 py-1 rounded flex justify-between items-center">
-                <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })}</span>
-                <span className="font-mono">{currentProdDate.toLocaleDateString('en-GB')}</span>
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
+                <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
+                <div className="flex flex-col items-center">
+                   <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | البليت: {billetWeight} طن)</span>
+                   <span className="font-mono text-[11px] text-blue-600">{currentProdDate.toLocaleDateString('en-GB')}</span>
+                </div>
+                <button onClick={() => handleDateChange(1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم تالي</button>
               </div>
+
               <div className="flex gap-1 items-center">
-                <input type="number" value={shiftBillets} onChange={(e) => setShiftBillets(e.target.value)} className="flex-1 p-1.5 border border-slate-400 rounded font-mono text-center text-lg font-bold outline-none" placeholder="عدد البليت" />
+                <input type="number" value={shiftBillets} onChange={(e) => setShiftBillets(e.target.value)} className="flex-1 p-1.5 border border-slate-400 rounded font-mono text-center text-lg font-bold outline-none" placeholder="عدد البليت للوردية" />
                 <select value={selectedShift} onChange={(e) => setSelectedShift(e.target.value)} className="w-1/2 bg-slate-100 border border-slate-400 text-[11px] font-bold p-2 rounded outline-none focus:border-blue-500">
                   {availableShifts.map(shift => <option key={shift} value={shift}>{shift}</option>)}
                 </select>
@@ -297,10 +423,33 @@ export default function App() {
           )}
 
           {currentUser === 'manager' && (
-            <div className="grid grid-cols-3 gap-1 flex-none text-center">
-               <div className="bg-green-100 p-1 border border-green-300 rounded"><p className="text-[9px] font-bold text-green-800">أقل من 80%</p><p className="font-black text-green-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length}</p></div>
-               <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
-               <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
+            <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
+              <div className="grid grid-cols-3 gap-1 text-center">
+                 <div className="bg-green-100 p-1 border border-green-300 rounded"><p className="text-[9px] font-bold text-green-800">أقل من 80%</p><p className="font-black text-green-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length}</p></div>
+                 <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
+                 <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
+              </div>
+              <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-200">
+                <div className="flex items-center gap-1">
+                  <Sliders className="w-4 h-4 text-blue-600" />
+                  <span className="text-[10px] font-bold text-slate-700">الوزن (طن):</span>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    value={billetWeight} 
+                    onChange={(e) => handleWeightChange(e.target.value)} 
+                    className="w-14 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" 
+                  />
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                    <RefreshCw className="w-3 h-3" /> تصفير الستاندات
+                  </button>
+                  <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                    <Trash2 className="w-3 h-3" /> مسح الأرشيف
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -322,12 +471,13 @@ export default function App() {
                     <span className={`font-mono font-black text-xl md:text-3xl leading-none ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
                     <span className="text-[9px] font-bold opacity-70 mt-1">{currentUser === 'tech' ? `من ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
                   </div>
+                  
                   {currentUser === 'tech' ? (
                     <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1 bg-slate-800 text-white text-[9px] font-bold rounded z-10 active:scale-95">تصفير الدرفيل</button>
                   ) : (
                     <div className="mt-1 pt-1 border-t border-black/10 flex items-center justify-between gap-1 z-10">
-                       <span className="text-[8px] font-bold opacity-70">الهدف:</span>
-                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-12 text-[10px] text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500" />
+                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[8px] px-1 py-0.5 rounded font-bold">ريست</button>
+                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-10 text-[10px] text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500" />
                     </div>
                   )}
                 </div>
@@ -337,6 +487,117 @@ export default function App() {
         </div>
       )}
 
+      {/* شاشة الإحصائيات التحليلية (الداشبورد الكيرفي) */}
+      {activeTab === 'analytics' && (
+        <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-blue-600" />
+              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات وتحليل الإنتاجية</h2>
+            </div>
+          </div>
+          
+          {productionArchive.length === 0 ? (
+            <div className="text-center py-12 text-slate-400 flex flex-col items-center gap-2">
+              <BarChart3 className="w-10 h-10 opacity-30" />
+              <p className="text-sm font-bold">لا توجد بيانات إنتاجية مسجلة لعرض الرسومات البيانية بعد.</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center">
+                  <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
+                    {productionArchive.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
+                  </p>
+                </div>
+                <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center">
+                  <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-green-900">
+                    {productionArchive.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
+                  </p>
+                </div>
+                <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center">
+                  <p className="text-[10px] font-bold text-purple-800">عدد الورديات المسجلة</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
+                    {productionArchive.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
+                  <span className="text-[9px] text-slate-400 font-mono">آخر 10 ورديات مسجلة</span>
+                </div>
+                
+                <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
+                  <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                    <defs>
+                      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+                    
+                    {(() => {
+                      const maxVal = Math.max(...productionArchive.map(l => l.tons), 1);
+                      // نعكس الداتا لعرض الأقدم على اليسار والأحدث على اليمين
+                      const pointsData = [...productionArchive].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
+                      
+                      const points = pointsData.map((log, idx, arr) => {
+                        const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
+                        const y = 90 - (log.tons / maxVal) * 80;
+                        return `${x},${y}`;
+                      });
+                      
+                      const pathD = `M ${points.join(' L ')}`;
+                      const areaD = `${pathD} L 95,95 L 5,95 Z`;
+
+                      return (
+                        <>
+                          <path d={areaD} fill="url(#grad)" />
+                          <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                          {points.map((pt, i) => {
+                            const [cx, cy] = pt.split(',');
+                            return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
+                          })}
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+                <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
+                  <span>الأقدم</span>
+                  <span>الأحدث</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <h3 className="font-bold text-xs text-slate-700">سجل أداء الورديات الإجمالي:</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {/* ترتيب الأرشيف من الأحدث للأقدم للعرض */}
+                  {[...productionArchive].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
+                    <div key={log.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
+                        <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
+                        <span className="text-[8px] text-slate-400 font-mono">آخر تحديث: {log.time}</span>
+                      </div>
+                      <div className="text-left font-mono">
+                        <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
+                        <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* شاشة الأرشيف (التقويم - المجمع بشكل منظم) */}
       {activeTab === 'archive' && (
         <div className="flex-1 bg-slate-100 rounded shadow border border-slate-300 p-1.5 overflow-y-auto">
           {sortedDates.length === 0 ? (
@@ -358,24 +619,24 @@ export default function App() {
                       <span className="text-[9px] font-bold text-blue-900 hidden sm:inline">إجمالي:</span>
                       <div className="flex gap-1 justify-between w-full sm:w-auto">
                         <span className="bg-white text-blue-800 text-[9px] font-bold px-1 py-0.5 rounded shadow-sm border border-blue-200 text-center flex-1 sm:flex-none">{dayData.totalBillets} <span className="font-normal opacity-70">ب</span></span>
-                        <span className="bg-green-500 text-white text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-center flex-1 sm:flex-none">{dayData.totalTons} <span className="font-normal opacity-90">ط</span></span>
+                        <span className="bg-green-500 text-white text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-center flex-1 sm:flex-none">{dayData.totalTons.toFixed(1)} <span className="font-normal opacity-90">ط</span></span>
                       </div>
                     </div>
                     <div className="p-1 flex-1 flex flex-col gap-1 bg-white">
-                      {dayData.shifts.map((log) => (
-                        <div key={log.id} className="flex flex-col sm:flex-row justify-between sm:items-center p-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-100">
+                      {dayData.shiftsList.map((log, index) => (
+                        <div key={index} className="flex flex-col sm:flex-row justify-between sm:items-center p-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-100">
                           <div className="flex justify-between sm:justify-start items-center sm:flex-col sm:items-start w-full sm:w-auto">
-                            <span className="font-bold text-[9px] text-slate-800">{log.shift.replace('الوردية ', '').replace(' (12 ساعة)', '')}</span>
+                            <span className="font-bold text-[9px] text-slate-800">{log.shift.replace('الوردية ', '').replace(' (12 ساعة)', '')} (مقاس {log.productSize || '10'} مم)</span>
                             <span className="text-[7px] text-slate-400 font-mono">{log.time}</span>
                           </div>
                           <div className="flex justify-between items-center text-left font-mono bg-white px-1 py-0.5 rounded border border-slate-200 mt-0.5 sm:mt-0 w-full sm:w-auto">
                             <div className="text-[9px]"><span className="font-bold text-slate-700">{log.billets}</span><span className="text-[7px] text-slate-400">ب</span></div>
                             <span className="mx-1 text-[8px] text-slate-300">|</span>
-                            <div className="text-[9px]"><span className="font-bold text-green-600">{log.tons}</span><span className="text-[7px] text-green-700">ط</span></div>
+                            <div className="text-[9px]"><span className="font-bold text-green-600">{log.tons.toFixed(1)}</span><span className="text-[7px] text-green-700">ط</span></div>
                           </div>
                         </div>
                       ))}
-                      {dayData.shifts.length < (new Date(dayData.timestamp).getDay() === 5 ? 2 : 3) && (
+                      {dayData.shiftsList.length < (new Date(dayData.timestamp).getDay() === 5 ? 2 : 3) && (
                          <div className="flex-1 min-h-[25px] border border-dashed border-slate-200 rounded flex items-center justify-center m-0.5 opacity-50">
                            <span className="text-[8px] font-bold text-slate-400">قيد التشغيل...</span>
                          </div>
