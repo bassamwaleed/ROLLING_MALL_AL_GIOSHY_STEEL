@@ -13,13 +13,14 @@ import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
   هنا ستضع المفاتيح التي سيعطيها لك موقع Firebase لاحقاً
 */
 const firebaseConfig = {
-  apiKey: "AIzaSyC3JM11miWda_leiK0LPViRNVdSZRCQ8N8",
-  authDomain: "khodnimaak.firebaseapp.com",
-  projectId: "khodnimaak",
-  storageBucket: "khodnimaak.firebasestorage.app",
-  messagingSenderId: "883484024405",
-  appId: "1:883484024405:web:d9da90553d82229582bedc",
-  measurementId: "G-7XGRZ863ET"
+  apiKey: "AIzaSyDrSPpzOlaC1CYRURzLWeI9crZwF5jV_QY",
+  authDomain: "rolling-mill-tracker.firebaseapp.com",
+  databaseURL: "https://rolling-mill-tracker-default-rtdb.firebaseio.com",
+  projectId: "rolling-mill-tracker",
+  storageBucket: "rolling-mill-tracker.firebasestorage.app",
+  messagingSenderId: "528405881772",
+  appId: "1:528405881772:web:30498fd387894331fb9009",
+  measurementId: "G-3XR8MT7T3S"
 };
 
 // تهيئة الاتصال بالسحابة
