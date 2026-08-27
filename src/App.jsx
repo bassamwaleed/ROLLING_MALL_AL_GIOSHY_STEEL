@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw } from 'lucide-react';
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -31,7 +31,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [userAuth, setUserAuth] = useState(null);
   
-  const BILLET_WEIGHT = 0.75; 
   const appId = 'al-gioshy-steel-rolls'; 
 
   const initialStands = Array.from({ length: 12 }, (_, i) => ({
@@ -43,6 +42,7 @@ export default function App() {
   }));
 
   const [stands, setStands] = useState(initialStands);
+  const [billetWeight, setBilletWeight] = useState(0.75); // وزن البليت القابل للتعديل من المدير
   const [shiftBillets, setShiftBillets] = useState(''); 
   const [productionArchive, setProductionArchive] = useState([]); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
@@ -59,6 +59,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
+    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState');
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
       if (docSnap.exists()) setStands(docSnap.data().standsList);
@@ -71,7 +72,15 @@ export default function App() {
       else setDoc(archiveRef, { archiveList: [] });
     });
 
-    return () => { unsubStands(); unsubArchive(); };
+    const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+      if (docSnap.exists() && docSnap.data().billetWeight) {
+        setBilletWeight(docSnap.data().billetWeight);
+      } else {
+        setDoc(settingsRef, { billetWeight: 0.75 });
+      }
+    });
+
+    return () => { unsubStands(); unsubArchive(); unsubSettings(); };
   }, [userAuth]);
 
   const handleProductSizeChange = (size) => {
@@ -83,7 +92,7 @@ export default function App() {
       }
       return { ...stand, isActive: active };
     });
-    saveToCloud(newStands, null);
+    saveToCloud(newStands, null, billetWeight);
   };
 
   const getInitialProductionState = () => {
@@ -124,22 +133,24 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  const saveToCloud = async (newStands, newArchive) => {
+  const saveToCloud = async (newStands, newArchive, newWeight) => {
     if (userAuth && db) {
       try {
         await setDoc(doc(db, 'factory', appId, 'data', 'standsState'), { standsList: newStands });
         if (newArchive) await setDoc(doc(db, 'factory', appId, 'data', 'archiveState'), { archiveList: newArchive });
+        if (newWeight !== undefined) await setDoc(doc(db, 'factory', appId, 'data', 'settingsState'), { billetWeight: newWeight });
       } catch (error) { console.error("Save error:", error); }
     } else {
       setStands(newStands);
       if (newArchive) setProductionArchive(newArchive);
+      if (newWeight !== undefined) setBilletWeight(newWeight);
     }
   };
 
   const handleToggleActive = (index) => {
     const newStands = [...stands];
     newStands[index].isActive = !newStands[index].isActive;
-    saveToCloud(newStands, null);
+    saveToCloud(newStands, null, billetWeight);
   };
 
   const handleResetStand = (index) => {
@@ -147,7 +158,7 @@ export default function App() {
       const newStands = [...stands];
       newStands[index].accumulatedTons = 0;
       newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
-      saveToCloud(newStands, null);
+      saveToCloud(newStands, null, billetWeight);
     }
   };
 
@@ -158,7 +169,7 @@ export default function App() {
         accumulatedTons: 0,
         lastResetDate: new Date().toLocaleDateString('en-GB')
       }));
-      saveToCloud(newStands, null);
+      saveToCloud(newStands, null, billetWeight);
     }
   };
 
@@ -167,7 +178,15 @@ export default function App() {
     if (val > 0) {
       const newStands = [...stands];
       newStands[index].maxLimit = val;
-      saveToCloud(newStands, null);
+      saveToCloud(newStands, null, billetWeight);
+    }
+  };
+
+  const handleWeightChange = (newVal) => {
+    const val = Number(newVal);
+    if (val > 0) {
+      setBilletWeight(val);
+      saveToCloud(stands, null, val);
     }
   };
 
@@ -175,7 +194,7 @@ export default function App() {
     const billetsCount = Number(shiftBillets);
     if (billetsCount <= 0 || isNaN(billetsCount)) return;
 
-    const addedTons = billetsCount * BILLET_WEIGHT;
+    const addedTons = billetsCount * billetWeight;
     const saveTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
@@ -194,7 +213,7 @@ export default function App() {
     };
     const newArchive = [newArchiveLog, ...productionArchive];
 
-    saveToCloud(newStands, newArchive);
+    saveToCloud(newStands, newArchive, billetWeight);
 
     const currentShiftIndex = availableShifts.indexOf(selectedShift);
     if (currentShiftIndex === availableShifts.length - 1) {
@@ -291,7 +310,7 @@ export default function App() {
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold px-2 py-1 rounded flex justify-between items-center">
-                <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم)</span>
+                <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | وزن: {billetWeight} طن)</span>
                 <span className="font-mono">{currentProdDate.toLocaleDateString('en-GB')}</span>
               </div>
               <div className="flex gap-1 items-center">
@@ -307,15 +326,28 @@ export default function App() {
           )}
 
           {currentUser === 'manager' && (
-            <div className="flex flex-col gap-1 flex-none">
+            <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
                  <div className="bg-green-100 p-1 border border-green-300 rounded"><p className="text-[9px] font-bold text-green-800">أقل من 80%</p><p className="font-black text-green-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length}</p></div>
                  <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
                  <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
               </div>
-              <button onClick={handleResetAllStands} className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-2 rounded text-xs flex justify-center items-center gap-1.5 shadow active:scale-95">
-                <RefreshCw className="w-3.5 h-3.5" /> تصفير كافة الستاندات بالكامل (إدارة)
-              </button>
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
+                <div className="flex items-center gap-1.5">
+                  <Sliders className="w-4 h-4 text-blue-600" />
+                  <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    value={billetWeight} 
+                    onChange={(e) => handleWeightChange(e.target.value)} 
+                    className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" 
+                  />
+                </div>
+                <button onClick={handleResetAllStands} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-[11px] flex items-center gap-1 shadow active:scale-95">
+                  <RefreshCw className="w-3 h-3" /> تصفير الكل
+                </button>
+              </div>
             </div>
           )}
 
@@ -337,12 +369,14 @@ export default function App() {
                     <span className={`font-mono font-black text-xl md:text-3xl leading-none ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
                     <span className="text-[9px] font-bold opacity-70 mt-1">{currentUser === 'tech' ? `من ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
                   </div>
+                  
+                  {/* أزرار التحكم الفردي للستاند */}
                   {currentUser === 'tech' ? (
                     <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1 bg-slate-800 text-white text-[9px] font-bold rounded z-10 active:scale-95">تصفير الدرفيل</button>
                   ) : (
                     <div className="mt-1 pt-1 border-t border-black/10 flex items-center justify-between gap-1 z-10">
-                       <span className="text-[8px] font-bold opacity-70">الهدف:</span>
-                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-12 text-[10px] text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500" />
+                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[8px] px-1 py-0.5 rounded font-bold">ريست</button>
+                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-10 text-[10px] text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500" />
                     </div>
                   )}
                 </div>
@@ -352,57 +386,112 @@ export default function App() {
         </div>
       )}
 
+      {/* صفحة الإحصائيات التحليلية بأسلوب الكيرف (Curve Dashboard) */}
       {activeTab === 'analytics' && (
         <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
-          <div className="flex items-center gap-2 border-b pb-2">
-            <BarChart3 className="w-5 h-5 text-blue-600" />
-            <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات وتحليل الإنتاجية</h2>
+          <div className="flex items-center justify-between border-b pb-2">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-blue-600" />
+              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات والتحليل البياني (Dashboard)</h2>
+            </div>
+            <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">تحليل حقيقي</span>
           </div>
           
           {productionArchive.length === 0 ? (
             <div className="text-center py-12 text-slate-400 flex flex-col items-center gap-2">
               <BarChart3 className="w-10 h-10 opacity-30" />
-              <p className="text-sm font-bold">لا توجد بيانات كافية لعرض الرسوم البيانية حتى الآن.</p>
+              <p className="text-sm font-bold">لا توجد بيانات إنتاجية مسجلة لعرض الرسومات البيانية بعد.</p>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-2">
+              {/* بطاقات الملخص */}
+              <div className="grid grid-cols-3 gap-2">
                 <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center">
-                  <p className="text-[10px] font-bold text-blue-800">إجمالي إنتاج المصنع</p>
-                  <p className="font-mono font-black text-xl text-blue-900">
-                    {productionArchive.reduce((acc, curr) => acc + curr.tons, 0)} <span className="text-xs font-normal">طن</span>
+                  <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
+                    {productionArchive.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
                   </p>
                 </div>
                 <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center">
-                  <p className="text-[10px] font-bold text-green-800">إجمالي عدد البليت</p>
-                  <p className="font-mono font-black text-xl text-green-900">
+                  <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-green-900">
                     {productionArchive.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
+                  </p>
+                </div>
+                <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center">
+                  <p className="text-[10px] font-bold text-purple-800">عدد الورديات</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
+                    {productionArchive.length} <span className="text-xs font-normal">وردية</span>
                   </p>
                 </div>
               </div>
 
+              {/* قسم الرسم البياني الكيرفي (SVG Curve Trend) */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend Curve)</h3>
+                  <span className="text-[9px] text-slate-400 font-mono">آخر الورديات المسجلة</span>
+                </div>
+                
+                <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
+                  {/* رسم خط الكيرف التفاعلي عبر SVG */}
+                  <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                    {/* خط التدرج الخلفي */}
+                    <defs>
+                      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+                    
+                    {/* بناء نقاط الكيرف بذكاء */}
+                    {(() => {
+                      const maxVal = Math.max(...productionArchive.map(l => l.tons), 1);
+                      const points = productionArchive.slice(0, 10).reverse().map((log, idx, arr) => {
+                        const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
+                        const y = 90 - (log.tons / maxVal) * 80;
+                        return `${x},${y}`;
+                      });
+                      
+                      const pathD = `M ${points.join(' L ')}`;
+                      const areaD = `${pathD} L 95,95 L 5,95 Z`;
+
+                      return (
+                        <>
+                          <path d={areaD} fill="url(#grad)" />
+                          <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                          {points.map((pt, i) => {
+                            const [cx, cy] = pt.split(',');
+                            return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
+                          })}
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+                <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
+                  <span>الأقدم</span>
+                  <span>الأحدث</span>
+                </div>
+              </div>
+
+              {/* تفاصيل الورديات التحليلية */}
               <div className="flex flex-col gap-2">
-                <h3 className="font-bold text-xs text-slate-700">تحليل إنتاج الورديات ومقاسات المنتجات:</h3>
-                <div className="flex flex-col gap-1.5">
-                  {productionArchive.map((log) => {
-                    const maxTons = Math.max(...productionArchive.map(l => l.tons), 1);
-                    const widthPercent = Math.min((log.tons / maxTons) * 100, 100);
-                    return (
-                      <div key={log.id} className="bg-slate-50 p-2 rounded border border-slate-200 flex flex-col gap-1">
-                        <div className="flex justify-between items-center text-xs font-bold">
-                          <span className="text-slate-800">{log.date} ({log.shift})</span>
-                          <span className="bg-blue-600 text-white px-1.5 py-0.5 rounded text-[10px]">مقاس {log.productSize || '10'} مم</span>
-                        </div>
-                        <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden flex">
-                          <div className="bg-green-500 h-full rounded-full transition-all duration-500" style={{ width: `${widthPercent}%` }}></div>
-                        </div>
-                        <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                          <span>{log.billets} بليت</span>
-                          <span className="font-bold text-green-700">{log.tons} طن</span>
-                        </div>
+                <h3 className="font-bold text-xs text-slate-700">تفاصيل أداء الورديات ومقاسات الحديد:</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {productionArchive.map((log) => (
+                    <div key={log.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
+                        <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
+                        <span className="text-[8px] text-slate-400 font-mono">{log.time}</span>
                       </div>
-                    );
-                  })}
+                      <div className="text-left font-mono">
+                        <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
+                        <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -431,7 +520,7 @@ export default function App() {
                       <span className="text-[9px] font-bold text-blue-900 hidden sm:inline">إجمالي:</span>
                       <div className="flex gap-1 justify-between w-full sm:w-auto">
                         <span className="bg-white text-blue-800 text-[9px] font-bold px-1 py-0.5 rounded shadow-sm border border-blue-200 text-center flex-1 sm:flex-none">{dayData.totalBillets} <span className="font-normal opacity-70">ب</span></span>
-                        <span className="bg-green-500 text-white text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-center flex-1 sm:flex-none">{dayData.totalTons} <span className="font-normal opacity-90">ط</span></span>
+                        <span className="bg-green-500 text-white text-[9px] font-bold px-1 py-0.5 rounded shadow-sm text-center flex-1 sm:flex-none">{dayData.totalTons.toFixed(1)} <span className="font-normal opacity-90">ط</span></span>
                       </div>
                     </div>
                     <div className="p-1 flex-1 flex flex-col gap-1 bg-white">
@@ -444,7 +533,7 @@ export default function App() {
                           <div className="flex justify-between items-center text-left font-mono bg-white px-1 py-0.5 rounded border border-slate-200 mt-0.5 sm:mt-0 w-full sm:w-auto">
                             <div className="text-[9px]"><span className="font-bold text-slate-700">{log.billets}</span><span className="text-[7px] text-slate-400">ب</span></div>
                             <span className="mx-1 text-[8px] text-slate-300">|</span>
-                            <div className="text-[9px]"><span className="font-bold text-green-600">{log.tons}</span><span className="text-[7px] text-green-700">ط</span></div>
+                            <div className="text-[9px]"><span className="font-bold text-green-600">{log.tons.toFixed(1)}</span><span className="text-[7px] text-green-700">ط</span></div>
                           </div>
                         </div>
                       ))}
