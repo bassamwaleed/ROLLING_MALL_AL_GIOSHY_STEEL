@@ -177,7 +177,7 @@ export default function App() {
   };
 
   /* ======================================================
-    5. دوال الحفظ والتشغيل
+    5. دوال التشغيل والحفظ السحابي
     ======================================================
   */
   const handleProductSizeChange = (size) => {
@@ -221,6 +221,12 @@ export default function App() {
     }
   };
 
+  // دالة فتح إعدادات المدير (هنا كان الخطأ وتم استرجاعها)
+  const openSettingsModal = () => {
+    setTempLogoUrl(customLogo);
+    setIsSettingsOpen(true);
+  };
+
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -259,7 +265,7 @@ export default function App() {
   };
 
   const handleResetAllStands = () => {
-    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟')) {
+    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟ (هذا الإجراء لا يمكن التراجع عنه)')) {
       const newStands = stands.map(stand => ({
         ...stand,
         accumulatedTons: 0,
@@ -297,6 +303,8 @@ export default function App() {
     if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
     const addedTons = billetsCount * billetWeight; 
+    
+    // أخذ الوقت من الجهاز الفعلي بالملي ثانية وقت الضغط
     const exactNow = new Date();
     const saveTime = exactNow.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const exactTimestamp = exactNow.getTime(); 
@@ -386,7 +394,6 @@ export default function App() {
     ======================================================
   */
   
-  // شاشة الدخول
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
@@ -496,7 +503,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* لوحة التشغيل */}
+      {/* لوحة التشغيل (الداشبورد) */}
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
           
@@ -550,7 +557,7 @@ export default function App() {
             </div>
           )}
 
-          {/* شاشة المدير (تم إصلاح الخلل في التنسيق هنا) */}
+          {/* شاشة المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -558,11 +565,10 @@ export default function App() {
                  <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
                  <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
               </div>
-              
               <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200">
                 <div className="flex items-center gap-1 shrink-0">
                   <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-[10px] font-bold text-slate-700">الوزن:</span>
+                  <span className="text-[10px] font-bold text-slate-700">الوزن (طن):</span>
                   <input 
                     type="number" 
                     step="0.01" 
@@ -583,8 +589,8 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات (Grid) */}
-          <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
+          {/* شبكة الستاندات المتناسقة */}
+          <div className="flex-1 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
               const percentage = Math.min((stand.accumulatedTons / stand.maxLimit) * 100, 100);
