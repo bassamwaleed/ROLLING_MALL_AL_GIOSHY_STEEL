@@ -609,7 +609,7 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات */}
+          {/* شبكة الستاندات المتسعة (Grid) */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-1">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -628,15 +628,17 @@ export default function App() {
                   
                   <div className="flex flex-col items-center justify-center flex-1 z-10 py-2">
                     <span className={`font-mono font-black text-3xl sm:text-4xl leading-none tracking-tighter ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
-                    <span className="text-[10px] sm:text-xs font-bold opacity-75 mt-1 sm:mt-2 text-slate-600">{currentUser === 'tech' ? `الهدف: ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
+                    {/* تعديل هنا: عرض الهدف (Max Limit) للجميع (مدير وفني) بدلاً من النسبة المئوية */}
+                    <span className="text-[10px] sm:text-xs font-bold opacity-75 mt-1 sm:mt-2 text-slate-600">الهدف: {stand.maxLimit} طن</span>
                   </div>
                   
                   {currentUser === 'tech' ? (
                     <button onClick={() => handleResetStand(idx)} className="w-full mt-1 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] sm:text-xs font-bold rounded-md z-10 active:scale-95 transition-transform shadow">تصفير الدرفيل</button>
                   ) : (
+                    // تعديل هنا: إصلاح ترتيب زر ريست وخانة الهدف للمدير لتظهر بوضوح في الموبايل
                     <div className="mt-1 pt-1.5 border-t border-black/10 flex items-center justify-between gap-1 z-10">
-                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[9px] sm:text-[10px] px-2 py-1 rounded font-bold transition-colors shadow-sm">ريست</button>
-                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-12 sm:w-14 text-xs text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500 p-0.5 shadow-inner" />
+                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[9px] px-2 py-1 rounded font-bold transition-colors shadow-sm shrink-0">ريست</button>
+                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-14 sm:w-16 text-[10px] sm:text-xs text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500 p-0.5 shadow-inner" />
                     </div>
                   )}
                 </div>
