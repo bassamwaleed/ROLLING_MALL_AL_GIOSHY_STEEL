@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, Image as ImageIcon } from 'lucide-react';
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, Image as ImageIcon, UploadCloud } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -78,7 +78,7 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
-  // إعدادات التحكم (تم إضافة اللوجو هنا ليرتبط بالسحابة)
+  // إعدادات التحكم
   const [billetWeight, setBilletWeight] = useState(0.75); 
   const [selectedProductSize, setSelectedProductSize] = useState('10'); 
   const [customLogo, setCustomLogo] = useState("https://placehold.co/400x150/1e293b/ffffff?text=Al-Gioshy+Steel&font=Montserrat");
@@ -172,6 +172,13 @@ export default function App() {
     setSelectedShift(isNewFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
   };
 
+  // دالة العودة لتاريخ ووردية (الآن)
+  const handleGoToToday = () => {
+    const currentState = getInitialProductionState();
+    setCurrentProdDate(currentState.prodDate);
+    setSelectedShift(currentState.initialShift);
+  };
+
   /* ======================================================
     5. دوال التشغيل والحفظ السحابي
     ======================================================
@@ -195,7 +202,7 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  // تعديل دالة الحفظ لتدعم حفظ اللوجو مع دمج البيانات (Merge)
+  // دالة الحفظ السحابي (تشمل اللوجو كـ Base64)
   const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
     if (userAuth && db) {
       try {
@@ -218,14 +225,26 @@ export default function App() {
     }
   };
 
-  // فتح وإغلاق إعدادات النظام
+  // --- دوال اللوجو المرفوع (الصورة) ---
   const openSettingsModal = () => {
     setTempLogoUrl(customLogo);
     setIsSettingsOpen(true);
   };
 
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        // تحويل الصورة لنص (Base64) وحفظها في الـ State المؤقت
+        setTempLogoUrl(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSaveSettings = () => {
-    if (tempLogoUrl.trim() !== '') {
+    if (tempLogoUrl && tempLogoUrl.trim() !== '') {
       saveToCloud(null, null, null, tempLogoUrl.trim());
     }
     setIsSettingsOpen(false);
@@ -259,7 +278,7 @@ export default function App() {
 
   const handleClearArchive = () => {
     if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف والإحصائيات القديمة بشكل كامل والبدء من جديد؟')) {
-      saveToCloud(null, [], null, null);
+      saveToCloud(stands, [], null, null);
       alert('تم مسح الأرشيف بنجاح.');
     }
   }
@@ -377,7 +396,7 @@ export default function App() {
           
           {/* عرض لوجو المصنع في شاشة الدخول */}
           <div className="w-full flex justify-center mb-6 bg-white/5 p-2 rounded-lg border border-white/10">
-            <img src={customLogo} alt="Factory Logo" className="h-16 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/1e293b/ffffff?text=Logo+Error"} />
+            <img src={customLogo} alt="Factory Logo" className="h-20 object-contain drop-shadow-md" onError={(e) => e.target.src="https://placehold.co/400x150/1e293b/ffffff?text=Logo+Error"} />
           </div>
           
           <h1 className="text-2xl font-black mb-2 text-slate-100">تتبع درافيل الإنتاج</h1>
@@ -404,7 +423,7 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      {/* نافذة إعدادات النظام (تغيير اللوجو) */}
+      {/* نافذة إعدادات النظام (رفع اللوجو من الجهاز) */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
@@ -413,27 +432,28 @@ export default function App() {
               <button onClick={() => setIsSettingsOpen(false)} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
             </div>
             <div className="p-4 flex flex-col gap-4">
+              
               <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-1"><ImageIcon className="w-4 h-4 text-blue-600"/> رابط لوجو المصنع (URL):</label>
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                  <UploadCloud className="w-4 h-4 text-blue-600"/> رفع لوجو المصنع (من الجهاز):
+                </label>
                 <input 
-                  type="text" 
-                  value={tempLogoUrl} 
-                  onChange={e => setTempLogoUrl(e.target.value)} 
-                  className="w-full border border-slate-300 rounded p-2.5 text-left font-mono text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-200 outline-none" 
-                  dir="ltr" 
-                  placeholder="https://..." 
+                  type="file" 
+                  accept="image/*"
+                  onChange={handleLogoUpload} 
+                  className="w-full border border-slate-300 rounded p-1.5 text-xs focus:border-blue-500 outline-none file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" 
                 />
-                <p className="text-[10px] text-slate-500">ارفع الشعار على أي موقع تخزين (مثل imgur.com) وضع الرابط المباشر هنا ليتم تطبيقه فوراً.</p>
+                <p className="text-[9px] text-slate-500">اختر صورة المصنع (يفضل حجم صغير) وسيتم حفظها مباشرة في قاعدة البيانات.</p>
               </div>
               
               {tempLogoUrl && (
                 <div className="bg-slate-100 p-3 rounded-lg border border-slate-200 flex flex-col items-center gap-2">
                   <span className="text-[9px] font-bold text-slate-400">معاينة الشعار:</span>
-                  <img src={tempLogoUrl} alt="Preview" className="h-12 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/f1f5f9/64748b?text=Invalid+Image"} />
+                  <img src={tempLogoUrl} alt="Preview" className="h-16 object-contain" onError={(e) => e.target.src="https://placehold.co/400x150/f1f5f9/64748b?text=Invalid+Image"} />
                 </div>
               )}
 
-              <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md">
+              <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md mt-2">
                 <Save className="w-4 h-4" /> حفظ الإعدادات
               </button>
             </div>
@@ -447,7 +467,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             {/* اللوجو المصغر في شريط التنقل */}
             <div className="bg-white/10 p-0.5 rounded backdrop-blur-sm hidden sm:flex">
-               <img src={customLogo} alt="Logo" className="h-6 w-auto max-w-[100px] object-contain" onError={(e) => e.target.src="https://placehold.co/100x30/1e293b/ffffff?text=Logo"} />
+               <img src={customLogo} alt="Logo" className="h-7 w-auto max-w-[120px] object-contain" onError={(e) => e.target.src="https://placehold.co/100x30/1e293b/ffffff?text=Logo"} />
             </div>
             <span className="font-bold text-sm">Roll Tracker</span>
           </div>
@@ -496,10 +516,18 @@ export default function App() {
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
-                <div className="flex flex-col items-center">
-                   <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | البليت: {billetWeight} طن)</span>
-                   <span className="font-mono text-[11px] text-blue-600">{currentProdDate.toLocaleDateString('en-GB')}</span>
+                
+                {/* زرار "الآن" المضاف حديثاً للعودة للوقت الحالي فوراً */}
+                <div className="flex items-center gap-2">
+                  <button onClick={handleGoToToday} className="px-2 py-1 bg-green-500 hover:bg-green-600 rounded active:scale-95 text-white shadow-sm transition-colors text-[9px] font-bold flex gap-1 items-center">
+                    الآن <RotateCcw className="w-3 h-3"/>
+                  </button>
+                  <div className="flex flex-col items-center">
+                     <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | البليت: {billetWeight} طن)</span>
+                     <span className="font-mono text-[11px] text-blue-600">{currentProdDate.toLocaleDateString('en-GB')}</span>
+                  </div>
                 </div>
+
                 <button onClick={() => handleDateChange(1)} className="px-2 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم تالي</button>
               </div>
 
