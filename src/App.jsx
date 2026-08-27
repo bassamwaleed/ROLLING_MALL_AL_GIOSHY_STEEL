@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
+// استدعاء الأيقونات الجاهزة من مكتبة lucide-react (تم إضافة أيقونات للإحصائيات والوزن)
 import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders } from 'lucide-react';
+// استدعاء دوال Firebase للاتصال بقاعدة البيانات السحابية
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
+/* ======================================================
+  1. منطقة إعدادات قاعدة البيانات (Firebase)
+  ======================================================
+*/
 const firebaseConfig = {
   apiKey: "AIzaSyDrSPpzOlaC1CYRURzLWeI9crZwF5jV_QY",
   authDomain: "rolling-mill-tracker.firebaseapp.com",
@@ -15,6 +21,7 @@ const firebaseConfig = {
   measurementId: "G-3XR8MT7T3S"
 };
 
+// تهيئة الاتصال بالسحابة
 let app, auth, db;
 try {
   if (Object.keys(firebaseConfig).length > 0) {
@@ -26,13 +33,19 @@ try {
   console.error("Firebase init error:", error);
 }
 
+// ======================================================
+// بداية التطبيق الفعلي (المكون الرئيسي App)
+// ======================================================
 export default function App() {
-  const [currentUser, setCurrentUser] = useState('none');
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [userAuth, setUserAuth] = useState(null);
+  /* 2. منطقة المتغيرات الحية (State)
+  */
+  const [currentUser, setCurrentUser] = useState('none'); 
+  const [activeTab, setActiveTab] = useState('dashboard'); 
+  const [userAuth, setUserAuth] = useState(null); 
   
   const appId = 'al-gioshy-steel-rolls'; 
 
+  // تهيئة الـ 12 ستاند كبيانات مبدئية
   const initialStands = Array.from({ length: 12 }, (_, i) => ({
     id: i + 1, 
     isActive: true, 
@@ -42,12 +55,18 @@ export default function App() {
   }));
 
   const [stands, setStands] = useState(initialStands);
-  const [billetWeight, setBilletWeight] = useState(0.75); // وزن البليت القابل للتعديل من المدير
   const [shiftBillets, setShiftBillets] = useState(''); 
   const [productionArchive, setProductionArchive] = useState([]); 
-  const [selectedProductSize, setSelectedProductSize] = useState('10'); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
+  
+  // -- إضافات جديدة للتحكم --
+  const [billetWeight, setBilletWeight] = useState(0.75); // وزن البليت القابل للتعديل
+  const [selectedProductSize, setSelectedProductSize] = useState('10'); // مقاس المنتج لتحديد الستاندات
 
+  /* ======================================================
+    3. الاتصال وجلب البيانات (useEffect)
+    ======================================================
+  */
   useEffect(() => {
     if (!auth) { setIsDataLoaded(true); return; }
     signInAnonymously(auth).catch(e => console.error(e));
@@ -59,7 +78,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
-    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState');
+    const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); // جلب إعدادات الوزن
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
       if (docSnap.exists()) setStands(docSnap.data().standsList);
@@ -83,18 +102,10 @@ export default function App() {
     return () => { unsubStands(); unsubArchive(); unsubSettings(); };
   }, [userAuth]);
 
-  const handleProductSizeChange = (size) => {
-    setSelectedProductSize(size);
-    const newStands = stands.map((stand, index) => {
-      let active = true;
-      if (['16', '18', '22'].includes(size)) {
-        if (index >= 10) active = false; 
-      }
-      return { ...stand, isActive: active };
-    });
-    saveToCloud(newStands, null, billetWeight);
-  };
-
+  /* ======================================================
+    4. منطق اليوم الإنتاجي ونظام الورديات
+    ======================================================
+  */
   const getInitialProductionState = () => {
     const now = new Date();
     const hour = now.getHours();
@@ -126,6 +137,24 @@ export default function App() {
     if (!availableShifts.includes(selectedShift)) setSelectedShift(availableShifts[0]);
   }, [isFriday]);
 
+  /* ======================================================
+    5. دوال التشغيل (Functions)
+    ======================================================
+  */
+  
+  // التحكم التلقائي بالستاندات حسب المقاس
+  const handleProductSizeChange = (size) => {
+    setSelectedProductSize(size);
+    const newStands = stands.map((stand, index) => {
+      let active = true;
+      if (['16', '18', '22'].includes(size)) {
+        if (index >= 10) active = false; // تعطيل الستاندات 11 و 12 للمقاسات الكبيرة
+      }
+      return { ...stand, isActive: active };
+    });
+    saveToCloud(newStands, null, billetWeight);
+  };
+
   const getStandStatus = (tons, limit) => {
     const percentage = (tons / limit) * 100;
     if (percentage >= 100) return { color: 'danger', bg: 'bg-red-100', border: 'border-red-500', bar: 'bg-red-600', text: 'text-red-700' };
@@ -153,6 +182,7 @@ export default function App() {
     saveToCloud(newStands, null, billetWeight);
   };
 
+  // تصفير ستاند محدد (للفني والمدير)
   const handleResetStand = (index) => {
     if(window.confirm(`تصفير وتغيير درافيل ستاند رقم ${stands[index].id}؟`)) {
       const newStands = [...stands];
@@ -162,6 +192,7 @@ export default function App() {
     }
   };
 
+  // تصفير كل الستاندات (للمدير فقط)
   const handleResetAllStands = () => {
     if(window.confirm('تحذير: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟')) {
       const newStands = stands.map(stand => ({
@@ -182,6 +213,7 @@ export default function App() {
     }
   };
 
+  // تغيير وزن البليت من قبل المدير
   const handleWeightChange = (newVal) => {
     const val = Number(newVal);
     if (val > 0) {
@@ -192,14 +224,15 @@ export default function App() {
 
   const handleAddShiftProduction = () => {
     const billetsCount = Number(shiftBillets);
-    if (billetsCount <= 0 || isNaN(billetsCount)) return;
+    if (billetsCount <= 0 || isNaN(billetsCount)) return; 
 
-    const addedTons = billetsCount * billetWeight;
+    const addedTons = billetsCount * billetWeight; // تم التعديل لاستخدام الوزن المتغير
     const saveTime = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const dateStr = currentProdDate.toLocaleDateString('en-GB'); 
     const dayNameStr = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
     
     const newStands = stands.map(stand => stand.isActive ? { ...stand, accumulatedTons: stand.accumulatedTons + addedTons } : stand);
+    
     const newArchiveLog = { 
       id: Date.now(), 
       date: dateStr, 
@@ -208,12 +241,12 @@ export default function App() {
       shift: selectedShift, 
       billets: billetsCount, 
       tons: addedTons, 
-      productSize: selectedProductSize, 
+      productSize: selectedProductSize, // حفظ مقاس المنتج في الأرشيف
       timestamp: currentProdDate.getTime() 
     };
     const newArchive = [newArchiveLog, ...productionArchive];
 
-    saveToCloud(newStands, newArchive, billetWeight);
+    saveToCloud(newStands, newArchive, billetWeight); 
 
     const currentShiftIndex = availableShifts.indexOf(selectedShift);
     if (currentShiftIndex === availableShifts.length - 1) {
@@ -229,6 +262,10 @@ export default function App() {
     setShiftBillets(''); 
   };
 
+  /* ======================================================
+    6. ترتيب وتجميع الأرشيف
+    ======================================================
+  */
   const groupedArchive = productionArchive.reduce((acc, log) => {
     if (!acc[log.date]) acc[log.date] = { dayName: log.dayName, totalBillets: 0, totalTons: 0, shifts: [], timestamp: log.timestamp };
     acc[log.date].totalBillets += log.billets;
@@ -241,6 +278,11 @@ export default function App() {
   Object.keys(groupedArchive).forEach(dateKey => groupedArchive[dateKey].shifts.sort((a, b) => shiftOrder[a.shift] - shiftOrder[b.shift]));
   const sortedDates = Object.keys(groupedArchive).sort((a, b) => groupedArchive[b].timestamp - groupedArchive[a].timestamp);
 
+  /* ======================================================
+    7. واجهة المستخدم (HTML & Tailwind CSS)
+    ======================================================
+  */
+  
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
@@ -269,6 +311,8 @@ export default function App() {
 
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
+      
+      {/* الشريط العلوي */}
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-1">
@@ -290,10 +334,13 @@ export default function App() {
         </div>
       </nav>
 
+      {/* شاشة الداشبورد (لوحة التحكم) */}
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-1 flex-1 overflow-hidden">
+          
+          {/* اختيار مقاس المنتج */}
           <div className="bg-white p-1.5 rounded shadow flex items-center justify-between border border-slate-300 flex-none text-xs">
-            <span className="font-bold text-slate-700">مقاس المنتج الحالي:</span>
+            <span className="font-bold text-slate-700">المنتج الحالي:</span>
             <div className="flex gap-1">
               {['10', '12', '16', '18', '22'].map((size) => (
                 <button
@@ -307,10 +354,11 @@ export default function App() {
             </div>
           </div>
 
+          {/* جزء الإدخال الخاص بالفني */}
           {currentUser === 'tech' && (
             <div className="bg-white p-1.5 rounded shadow flex flex-col flex-none border border-slate-300 gap-1.5">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold px-2 py-1 rounded flex justify-between items-center">
-                <span>تسجيل لـ: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | وزن: {billetWeight} طن)</span>
+                <span>تسجيل: {currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' })} (مقاس {selectedProductSize} مم | البليت: {billetWeight} طن)</span>
                 <span className="font-mono">{currentProdDate.toLocaleDateString('en-GB')}</span>
               </div>
               <div className="flex gap-1 items-center">
@@ -325,6 +373,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ملخص الإحصائيات وإعدادات المدير */}
           {currentUser === 'manager' && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -332,10 +381,11 @@ export default function App() {
                  <div className="bg-yellow-100 p-1 border border-yellow-400 rounded"><p className="text-[9px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
                  <div className="bg-red-100 p-1 border border-red-500 rounded"><p className="text-[9px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
               </div>
+              {/* إعدادات وزن البليت وتصفير الكل */}
               <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200">
                 <div className="flex items-center gap-1.5">
                   <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
+                  <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
                   <input 
                     type="number" 
                     step="0.01" 
@@ -351,6 +401,7 @@ export default function App() {
             </div>
           )}
 
+          {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-6 gap-1 overflow-hidden">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
@@ -359,12 +410,14 @@ export default function App() {
               return (
                 <div key={idx} className={`rounded flex flex-col justify-between border ${stand.isActive ? status.bg : 'bg-slate-300 opacity-60'} ${status.border} p-1 relative overflow-hidden`}>
                   <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-300/50"><div className={`h-full ${status.bar}`} style={{width: `${percentage}%`}}></div></div>
+                  
                   <div className="flex justify-between items-center z-10">
                     <span className="font-black text-xs">St. {stand.id}</span>
                     {currentUser === 'tech' ? (
                       <button onClick={() => handleToggleActive(idx)} className={`p-1 rounded ${stand.isActive ? 'text-green-600 bg-white/50' : 'text-slate-500 bg-black/10'}`}><Power className="w-3 h-3" /></button>
                     ) : (status.color === 'danger' && <AlertTriangle className="w-3 h-3 text-red-500 animate-ping" />)}
                   </div>
+                  
                   <div className="flex flex-col items-center justify-center flex-1 z-10">
                     <span className={`font-mono font-black text-xl md:text-3xl leading-none ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
                     <span className="text-[9px] font-bold opacity-70 mt-1">{currentUser === 'tech' ? `من ${stand.maxLimit} طن` : `النسبة: ${percentage.toFixed(1)}%`}</span>
@@ -386,13 +439,13 @@ export default function App() {
         </div>
       )}
 
-      {/* صفحة الإحصائيات التحليلية بأسلوب الكيرف (Curve Dashboard) */}
+      {/* شاشة الإحصائيات التحليلية (الداشبورد الكيرفي) */}
       {activeTab === 'analytics' && (
         <div className="flex-1 bg-white rounded shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
           <div className="flex items-center justify-between border-b pb-2">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-blue-600" />
-              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات والتحليل البياني (Dashboard)</h2>
+              <h2 className="font-black text-sm text-slate-800">لوحة الإحصائيات وتحليل الإنتاجية</h2>
             </div>
             <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">تحليل حقيقي</span>
           </div>
@@ -404,7 +457,6 @@ export default function App() {
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {/* بطاقات الملخص */}
               <div className="grid grid-cols-3 gap-2">
                 <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center">
                   <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
@@ -426,17 +478,15 @@ export default function App() {
                 </div>
               </div>
 
-              {/* قسم الرسم البياني الكيرفي (SVG Curve Trend) */}
+              {/* الرسم البياني الكيرفي */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend Curve)</h3>
+                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
                   <span className="text-[9px] text-slate-400 font-mono">آخر الورديات المسجلة</span>
                 </div>
                 
                 <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
-                  {/* رسم خط الكيرف التفاعلي عبر SVG */}
                   <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
-                    {/* خط التدرج الخلفي */}
                     <defs>
                       <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
                         <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
@@ -444,7 +494,6 @@ export default function App() {
                       </linearGradient>
                     </defs>
                     
-                    {/* بناء نقاط الكيرف بذكاء */}
                     {(() => {
                       const maxVal = Math.max(...productionArchive.map(l => l.tons), 1);
                       const points = productionArchive.slice(0, 10).reverse().map((log, idx, arr) => {
@@ -475,7 +524,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* تفاصيل الورديات التحليلية */}
+              {/* تفاصيل الإنتاج */}
               <div className="flex flex-col gap-2">
                 <h3 className="font-bold text-xs text-slate-700">تفاصيل أداء الورديات ومقاسات الحديد:</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -499,6 +548,7 @@ export default function App() {
         </div>
       )}
 
+      {/* شاشة الأرشيف (التقويم) */}
       {activeTab === 'archive' && (
         <div className="flex-1 bg-slate-100 rounded shadow border border-slate-300 p-1.5 overflow-y-auto">
           {sortedDates.length === 0 ? (
