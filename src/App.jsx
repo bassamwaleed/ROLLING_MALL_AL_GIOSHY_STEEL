@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud, FileText } from 'lucide-react';
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud, FileText, History } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -78,7 +78,7 @@ export default function App() {
   const [stands, setStands] = useState(initialStands);
   const [shiftBillets, setShiftBillets] = useState(''); 
   const [productionArchive, setProductionArchive] = useState([]); 
-  const [passChanges, setPassChanges] = useState([]); // سجل تغيير الممرات الجديد
+  const [passChanges, setPassChanges] = useState([]); 
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
   const [billetWeight, setBilletWeight] = useState(0.75); 
@@ -87,20 +87,18 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
-  // ======================================================
-  // نظام النوافذ المنبثقة (Modals) بديلاً للـ alert و confirm
-  // ======================================================
-  const [modal, setModal] = useState({ isOpen: false, type: '', title: '', message: '', inputPlaceholder: '', onConfirm: null });
-  const [modalInput, setModalInput] = useState('');
+  // نوافذ إضافية للريست الذكي وسجل الستاند
+  const [resetModal, setResetModal] = useState({ isOpen: false, standIndex: null });
+  const [resetBillets, setResetBillets] = useState('');
+  const [resetNotes, setResetNotes] = useState('');
+  
+  const [historyModal, setHistoryModal] = useState({ isOpen: false, standId: null });
 
+  // النوافذ الأساسية
+  const [modal, setModal] = useState({ isOpen: false, type: '', title: '', message: '', onConfirm: null });
   const closeBox = () => setModal({ ...modal, isOpen: false });
-
   const showAlert = (title, message) => setModal({ isOpen: true, type: 'alert', title, message, onConfirm: closeBox });
   const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, type: 'confirm', title, message, onConfirm });
-  const showPrompt = (title, message, inputPlaceholder, onConfirm) => {
-    setModalInput('');
-    setModal({ isOpen: true, type: 'prompt', title, message, inputPlaceholder, onConfirm });
-  };
 
   /* ======================================================
     3. الاتصال وجلب البيانات (useEffect)
@@ -216,7 +214,7 @@ export default function App() {
   };
 
   const getStandStatus = (tons, limit) => {
-    const percentage = (tons / limit) * 100;
+    const percentage = Math.max(0, (tons / limit) * 100); // تجنب النسب السالبة في الألوان
     if (percentage >= 100) return { color: 'danger', bg: 'bg-red-100', border: 'border-red-500', bar: 'bg-red-600', text: 'text-red-700' };
     if (percentage >= 80) return { color: 'warning', bg: 'bg-yellow-100', border: 'border-yellow-400', bar: 'bg-yellow-500', text: 'text-yellow-700' };
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
@@ -279,34 +277,42 @@ export default function App() {
     saveToCloud(newStands, null, null, null, null);
   };
 
-  // تعديل دالة الريست لتسأل عن سبب تغيير الممر وتحفظه في السجل
-  const handleResetStand = (index) => {
-    showPrompt(
-      "تغيير ممر الدرفيل", 
-      `سيتم تصفير ستاند رقم ${stands[index].id}. يرجى كتابة ملاحظات التغيير (اختياري):`, 
-      "مثال: تآكل في الممر، تغيير مقاس...", 
-      (reason) => {
-        const newStands = [...stands];
-        const producedTonsBeforeReset = newStands[index].accumulatedTons; // الأطنان قبل التصفير
-        
-        newStands[index].accumulatedTons = 0;
-        newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
+  // فتح نافذة الريست الذكية
+  const initiateResetStand = (index) => {
+    setResetBillets('');
+    setResetNotes('');
+    setResetModal({ isOpen: true, standIndex: index });
+  };
 
-        // تسجيل حدث التغيير
-        const newChangeLog = {
-          id: Date.now(),
-          standId: newStands[index].id,
-          tons: producedTonsBeforeReset,
-          date: new Date().toLocaleDateString('en-GB'),
-          time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-          notes: reason || 'بدون ملاحظات',
-          productSize: selectedProductSize
-        };
-        const updatedPassChanges = [newChangeLog, ...passChanges];
+  // تنفيذ الريست الذكي
+  const confirmResetStand = () => {
+    const index = resetModal.standIndex;
+    const newStands = [...stands];
+    
+    const bCount = Number(resetBillets) || 0; // البليت قبل التغيير
+    const addedTonsBeforeChange = bCount * billetWeight;
+    
+    // إجمالي الأطنان النهائي للممر القديم
+    const finalOldPassTons = newStands[index].accumulatedTons + addedTonsBeforeChange;
 
-        saveToCloud(newStands, null, null, null, updatedPassChanges);
-      }
-    );
+    const newChangeLog = {
+      id: Date.now(),
+      standId: newStands[index].id,
+      tons: finalOldPassTons,
+      date: new Date().toLocaleDateString('en-GB'),
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      notes: resetNotes || 'بدون ملاحظات',
+      productSize: selectedProductSize,
+      billetsAtChange: bCount
+    };
+    const updatedPassChanges = [newChangeLog, ...passChanges];
+
+    // السر هنا: بنخلي العداد بالسالب عشان يخصم اللي اتعمل لما الفني يحفظ الوردية كاملة
+    newStands[index].accumulatedTons = -addedTonsBeforeChange;
+    newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
+
+    saveToCloud(newStands, null, null, null, updatedPassChanges);
+    setResetModal({ isOpen: false, standIndex: null });
   };
 
   const handleResetAllStands = () => {
@@ -476,43 +482,104 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
-      {/* ----------------- النوافذ المنبثقة (Modals) ----------------- */}
+      {/* ----------------- النوافذ المنبثقة الأساسية (Alert & Confirm) ----------------- */}
       {modal.isOpen && (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200">
             <div className="p-5">
               <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                {modal.type === 'alert' ? <CheckCircle className="text-green-500 w-5 h-5"/> : modal.type === 'confirm' ? <AlertTriangle className="text-orange-500 w-5 h-5"/> : <Edit3 className="text-blue-500 w-5 h-5"/>}
+                {modal.type === 'alert' ? <CheckCircle className="text-green-500 w-5 h-5"/> : <AlertTriangle className="text-orange-500 w-5 h-5"/>}
                 {modal.title}
               </h3>
               <p className="text-sm text-slate-600 mt-2 leading-relaxed">{modal.message}</p>
-              {modal.type === 'prompt' && (
-                <input 
-                  type="text" 
-                  autoFocus 
-                  value={modalInput} 
-                  onChange={e => setModalInput(e.target.value)} 
-                  placeholder={modal.inputPlaceholder} 
-                  className="w-full mt-4 p-2.5 border border-slate-300 rounded-lg font-bold text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" 
-                />
-              )}
             </div>
             <div className="bg-slate-50 p-3 flex justify-end gap-2 border-t border-slate-100">
-              {modal.type !== 'alert' && (
+              {modal.type === 'confirm' && (
                 <button onClick={closeBox} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg font-bold text-slate-700 text-xs transition-colors">إلغاء</button>
               )}
-              <button 
-                onClick={() => { if(modal.onConfirm) modal.onConfirm(modalInput); closeBox(); }} 
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs shadow transition-colors"
-              >
-                موافق
+              <button onClick={() => { if(modal.onConfirm) modal.onConfirm(); closeBox(); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs shadow transition-colors">موافق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------- نافذة الريست الذكي ----------------- */}
+      {resetModal.isOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
+            <div className="bg-slate-800 p-3 flex justify-between items-center text-white">
+              <h3 className="font-bold text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4"/> تصفير ممر الدرفيل</h3>
+              <button onClick={() => setResetModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <p className="text-xs text-slate-600 font-bold bg-blue-50 p-2 rounded border border-blue-100">
+                لو تم التغيير في منتصف الوردية، اكتب الممر القديم عمل كام بليت، عشان النظام يفصل إنتاجيته عن الممر الجديد أوتوماتيك.
+              </p>
+              
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-slate-700">عدد البليت للممر القديم (في الوردية الحالية):</label>
+                <input 
+                  type="number" 
+                  value={resetBillets} 
+                  onChange={e => setResetBillets(e.target.value)} 
+                  className="w-full border border-slate-300 rounded p-2 font-mono text-sm focus:border-blue-500 outline-none" 
+                  placeholder="مثال: 45 (اختياري)" 
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-slate-700">ملاحظات أو سبب التغيير:</label>
+                <textarea 
+                  rows="2"
+                  value={resetNotes} 
+                  onChange={e => setResetNotes(e.target.value)} 
+                  className="w-full border border-slate-300 rounded p-2 text-xs focus:border-blue-500 outline-none resize-none" 
+                  placeholder="تآكل، كسر، تغيير منتج..." 
+                ></textarea>
+              </div>
+
+              <button onClick={confirmResetStand} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow mt-2">
+                تأكيد التصفير والتسجيل
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* نافذة رفع اللوجو */}
+      {/* ----------------- سجل الممر المحدد (نافذة منبثقة) ----------------- */}
+      {historyModal.isOpen && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col max-h-[80vh]">
+            <div className="bg-slate-800 p-3 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-bold text-sm flex items-center gap-2"><History className="w-4 h-4"/> سجل تغييرات ستاند رقم {historyModal.standId}</h3>
+              <button onClick={() => setHistoryModal({ isOpen: false, standId: null })} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-3 overflow-y-auto flex-1 flex flex-col gap-2 bg-slate-50">
+              {passChanges.filter(c => c.standId === historyModal.standId).length === 0 ? (
+                <div className="text-center py-8 text-slate-400 font-bold text-xs">لا يوجد سجل تغييرات لهذا الستاند.</div>
+              ) : (
+                passChanges.filter(c => c.standId === historyModal.standId).map(change => (
+                  <div key={change.id} className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-1">
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{change.date} | {change.time}</span>
+                      <span className="text-[11px] font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">إنتاج: {change.tons.toFixed(1)} طن</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-600 font-bold mt-1">
+                      <span>مقاس: {change.productSize} مم</span>
+                      <span>بليت قبل التغيير: {change.billetsAtChange || 0}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-700 bg-orange-50 p-1.5 rounded mt-1 border border-orange-100">
+                      <span className="font-bold text-orange-700">ملاحظات:</span> {change.notes}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة إعدادات النظام */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
@@ -691,30 +758,40 @@ export default function App() {
           {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-1">
             {stands.map((stand, idx) => {
+              // السماح بإظهار القيمة السالبة إن وجدت (كإثبات لخصم الوردية)، ولكن شريط النسبة لا يقل عن صفر
+              const displayTons = stand.accumulatedTons; 
+              const percentage = Math.max(0, Math.min((stand.accumulatedTons / stand.maxLimit) * 100, 100));
+
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
-              const percentage = Math.min((stand.accumulatedTons / stand.maxLimit) * 100, 100);
 
               return (
                 <div key={idx} className={`min-h-[135px] sm:min-h-[150px] rounded-lg flex flex-col justify-between border-2 ${stand.isActive ? status.bg : 'bg-slate-300 opacity-60'} ${status.border} p-1.5 sm:p-2 relative overflow-hidden shadow-sm hover:shadow transition-shadow`}>
                   <div className="absolute bottom-0 left-0 w-full h-1.5 bg-slate-300/50"><div className={`h-full ${status.bar}`} style={{width: `${percentage}%`, transition: 'width 0.5s ease-in-out'}}></div></div>
                   
                   <div className="flex justify-between items-start z-10">
-                    <span className="font-black text-sm sm:text-base text-slate-800">St. {stand.id}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="font-black text-sm sm:text-base text-slate-800">St. {stand.id}</span>
+                      {/* زر سجل الممر */}
+                      <button onClick={() => setHistoryModal({ isOpen: true, standId: stand.id })} className="p-0.5 sm:p-1 text-blue-600 bg-blue-100 hover:bg-blue-200 rounded transition-colors" title="سجل الممر">
+                        <History className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      </button>
+                    </div>
                     {currentUser === 'tech' ? (
                       <button onClick={() => handleToggleActive(idx)} className={`p-1.5 rounded-md transition-colors ${stand.isActive ? 'text-green-600 bg-white/60 hover:bg-white' : 'text-slate-500 bg-black/10 hover:bg-black/20'}`}><Power className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
                     ) : (status.color === 'danger' && <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 animate-ping" />)}
                   </div>
                   
                   <div className="flex flex-col items-center justify-center flex-1 z-10 py-1">
-                    <span className={`font-mono font-black text-3xl sm:text-4xl leading-none tracking-tighter ${status.text}`}>{stand.accumulatedTons.toFixed(0)}</span>
+                    <span className={`font-mono font-black text-3xl sm:text-4xl leading-none tracking-tighter ${status.text}`}>{displayTons.toFixed(0)}</span>
                     <span className="text-[10px] sm:text-xs font-bold opacity-75 mt-1 sm:mt-2 text-slate-600">الهدف: {stand.maxLimit} طن</span>
                   </div>
                   
                   {currentUser === 'tech' ? (
-                    <button onClick={() => handleResetStand(idx)} className="w-full mt-auto py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] sm:text-xs font-bold rounded-md z-10 active:scale-95 transition-transform shadow">تصفير الدرفيل</button>
+                    // تم تعديل زر التصفير لفتح النافذة الذكية
+                    <button onClick={() => initiateResetStand(idx)} className="w-full mt-auto py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] sm:text-xs font-bold rounded-md z-10 active:scale-95 transition-transform shadow">تصفير الدرفيل</button>
                   ) : (
                     <div className="mt-auto pt-1.5 border-t border-black/10 flex items-center justify-between gap-1 z-10 w-full">
-                       <button onClick={() => handleResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-bold transition-colors shadow-sm shrink-0">ريست</button>
+                       <button onClick={() => initiateResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-bold transition-colors shadow-sm shrink-0">ريست</button>
                        <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-12 sm:w-14 text-[10px] sm:text-xs text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500 p-0.5 shadow-inner" />
                     </div>
                   )}
@@ -727,7 +804,7 @@ export default function App() {
 
       {/* الإحصائيات والكيرف */}
       {activeTab === 'analytics' && (
-        <div className="flex-1 bg-white rounded-lg shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-3">
+        <div className="flex-1 bg-white rounded-lg shadow border border-slate-300 p-3 overflow-y-auto flex flex-col gap-4">
           <div className="flex items-center justify-between border-b pb-2">
             <div className="flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-blue-600" />
@@ -735,129 +812,138 @@ export default function App() {
             </div>
           </div>
           
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center shadow-sm">
-                <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
-                <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
-                  {aggregatedLogs.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
-                </p>
-              </div>
-              <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center shadow-sm">
-                <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
-                <p className="font-mono font-black text-lg sm:text-xl text-green-900">
-                  {aggregatedLogs.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
-                </p>
-              </div>
-              <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center shadow-sm">
-                <p className="text-[10px] font-bold text-purple-800">الورديات المسجلة</p>
-                <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
-                  {aggregatedLogs.length}
-                </p>
-              </div>
+          {aggregatedLogs.length === 0 ? (
+            <div className="text-center py-12 text-slate-400 flex flex-col items-center gap-2">
+              <BarChart3 className="w-10 h-10 opacity-30" />
+              <p className="text-sm font-bold">لا توجد بيانات إنتاجية مسجلة لعرض الرسومات البيانية بعد.</p>
             </div>
-
-            {/* سجل تغيير الممرات (الجديد) */}
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
-              <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                <RotateCcw className="w-4 h-4 text-orange-500" />
-                <h3 className="font-bold text-xs text-slate-700">سجل تغيير الممرات (تصفير الستاندات)</h3>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center shadow-sm">
+                  <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
+                    {aggregatedLogs.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
+                  </p>
+                </div>
+                <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center shadow-sm">
+                  <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-green-900">
+                    {aggregatedLogs.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
+                  </p>
+                </div>
+                <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center shadow-sm">
+                  <p className="text-[10px] font-bold text-purple-800">الورديات المسجلة</p>
+                  <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
+                    {aggregatedLogs.length}
+                  </p>
+                </div>
               </div>
-              {passChanges.length === 0 ? (
-                <p className="text-[10px] text-slate-500 text-center py-2">لم يتم تسجيل أي تغيير للممرات حتى الآن.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                  {passChanges.map(change => (
-                    <div key={change.id} className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-1">
-                      <div className="flex justify-between items-center">
-                        <span className="font-bold text-[11px] text-slate-800 flex items-center gap-1">
-                          <Settings2 className="w-3 h-3 text-slate-400" /> ستاند {change.standId}
-                        </span>
-                        <span className="text-[9px] font-bold bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded">إنتاج: {change.tons.toFixed(1)} طن</span>
-                      </div>
-                      <div className="flex justify-between text-[9px] text-slate-500 mt-1">
-                        <span>مقاس: {change.productSize} مم</span>
-                        <span dir="ltr">{change.date} {change.time}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded mt-1 border border-slate-100">
-                        <span className="font-bold text-blue-600">ملاحظات:</span> {change.notes}
-                      </p>
-                    </div>
-                  ))}
+
+              {/* سجل تغيير الممرات الشامل (تم توسيع الأعمدة للشاشات الكبيرة) */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                  <RotateCcw className="w-4 h-4 text-orange-500" />
+                  <h3 className="font-bold text-xs text-slate-700">سجل تغيير الممرات (تصفير الستاندات) الجماعي</h3>
                 </div>
-              )}
-            </div>
-
-            {aggregatedLogs.length > 0 && (
-              <>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
-                    <span className="text-[9px] text-slate-400 font-mono">آخر 10 ورديات مسجلة</span>
-                  </div>
-                  
-                  <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
-                    <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
-                      <defs>
-                        <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
-                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
-                        </linearGradient>
-                      </defs>
-                      
-                      {(() => {
-                        const maxVal = Math.max(...aggregatedLogs.map(l => l.tons), 1);
-                        const pointsData = [...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
-                        
-                        const points = pointsData.map((log, idx, arr) => {
-                          const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
-                          const y = 90 - (log.tons / maxVal) * 80;
-                          return `${x},${y}`;
-                        });
-                        
-                        const pathD = `M ${points.join(' L ')}`;
-                        const areaD = `${pathD} L 95,95 L 5,95 Z`;
-
-                        return (
-                          <>
-                            <path d={areaD} fill="url(#grad)" />
-                            <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                            {points.map((pt, i) => {
-                              const [cx, cy] = pt.split(',');
-                              return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
-                            })}
-                          </>
-                        );
-                      })()}
-                    </svg>
-                  </div>
-                  <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
-                    <span>الأقدم</span>
-                    <span>الأحدث</span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <h3 className="font-bold text-xs text-slate-700 flex items-center gap-1"><FileText className="w-4 h-4 text-blue-600"/> سجل أداء الورديات الإجمالي:</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
-                      <div key={i} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center hover:bg-white transition-colors cursor-default shadow-sm hover:shadow-md">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
-                          <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
-                          <span className="text-[8px] text-slate-400 font-mono">تحديث: {log.time}</span>
+                {passChanges.length === 0 ? (
+                  <p className="text-[10px] text-slate-500 text-center py-4 font-bold">لم يتم تسجيل أي تغيير للممرات حتى الآن.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 max-h-60 overflow-y-auto pr-1">
+                    {passChanges.map(change => (
+                      <div key={change.id} className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-1.5 hover:shadow transition-shadow">
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-1">
+                          <span className="font-bold text-xs text-slate-800 flex items-center gap-1">
+                            <Settings2 className="w-3.5 h-3.5 text-blue-500" /> ستاند {change.standId}
+                          </span>
+                          <span className="text-[10px] font-black text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">
+                            إنتاج: {change.tons.toFixed(1)} طن
+                          </span>
                         </div>
-                        <div className="text-left font-mono">
-                          <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
-                          <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                        <div className="flex justify-between text-[9px] text-slate-500 mt-1 font-bold">
+                          <span>مقاس: {change.productSize} مم</span>
+                          <span>بليت قبل التغيير: {change.billetsAtChange || 0}</span>
                         </div>
+                        <div className="flex justify-between text-[8px] text-slate-400 font-mono mt-0.5">
+                          <span dir="ltr">{change.date}</span>
+                          <span dir="ltr">{change.time}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded mt-1 border border-slate-100 line-clamp-2" title={change.notes}>
+                          <span className="font-bold text-blue-600">ملاحظات:</span> {change.notes}
+                        </p>
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
+                  <span className="text-[9px] text-slate-400 font-mono">آخر 10 ورديات مسجلة</span>
                 </div>
-              </>
-            )}
-          </div>
+                
+                <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
+                  <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                    <defs>
+                      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+                    
+                    {(() => {
+                      const maxVal = Math.max(...aggregatedLogs.map(l => l.tons), 1);
+                      const pointsData = [...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
+                      
+                      const points = pointsData.map((log, idx, arr) => {
+                        const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
+                        const y = 90 - (log.tons / maxVal) * 80;
+                        return `${x},${y}`;
+                      });
+                      
+                      const pathD = `M ${points.join(' L ')}`;
+                      const areaD = `${pathD} L 95,95 L 5,95 Z`;
+
+                      return (
+                        <>
+                          <path d={areaD} fill="url(#grad)" />
+                          <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                          {points.map((pt, i) => {
+                            const [cx, cy] = pt.split(',');
+                            return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
+                          })}
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+                <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
+                  <span>الأقدم</span>
+                  <span>الأحدث</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <h3 className="font-bold text-xs text-slate-700 flex items-center gap-1"><FileText className="w-4 h-4 text-blue-600"/> سجل أداء الورديات الإجمالي:</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                  {[...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
+                    <div key={i} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center hover:bg-white transition-colors cursor-default shadow-sm hover:shadow-md">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
+                        <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
+                        <span className="text-[8px] text-slate-400 font-mono">تحديث: {log.time}</span>
+                      </div>
+                      <div className="text-left font-mono">
+                        <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
+                        <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
