@@ -30,9 +30,7 @@ try {
   console.error("Firebase init error:", error);
 }
 
-// ======================================================
-// مكون الساعة الحية
-// ======================================================
+// مكون فرعي للساعة الحية
 const LiveClock = () => {
   const [time, setTime] = useState(new Date());
   
@@ -54,6 +52,20 @@ const LiveClock = () => {
       </div>
     </div>
   );
+};
+
+// دوال مساعدة للتاريخ
+const formatDateToISO = (dateObj) => {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatDateToGB = (yyyy_mm_dd) => {
+  if (!yyyy_mm_dd) return '';
+  const [y, m, d] = yyyy_mm_dd.split('-');
+  return `${d}/${m}/${y}`;
 };
 
 // ======================================================
@@ -87,10 +99,12 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
 
-  // نوافذ إضافية للريست الذكي وسجل الستاند
+  // نوافذ إضافية للريست الذكي
   const [resetModal, setResetModal] = useState({ isOpen: false, standIndex: null });
   const [resetBillets, setResetBillets] = useState('');
   const [resetNotes, setResetNotes] = useState('');
+  const [resetDateInput, setResetDateInput] = useState('');
+  const [resetShiftInput, setResetShiftInput] = useState('');
   
   const [historyModal, setHistoryModal] = useState({ isOpen: false, standId: null });
 
@@ -214,7 +228,7 @@ export default function App() {
   };
 
   const getStandStatus = (tons, limit) => {
-    const percentage = Math.max(0, (tons / limit) * 100); // تجنب النسب السالبة في الألوان
+    const percentage = Math.max(0, (tons / limit) * 100); 
     if (percentage >= 100) return { color: 'danger', bg: 'bg-red-100', border: 'border-red-500', bar: 'bg-red-600', text: 'text-red-700' };
     if (percentage >= 80) return { color: 'warning', bg: 'bg-yellow-100', border: 'border-yellow-400', bar: 'bg-yellow-500', text: 'text-yellow-700' };
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
@@ -277,11 +291,24 @@ export default function App() {
     saveToCloud(newStands, null, null, null, null);
   };
 
-  // فتح نافذة الريست الذكية
+  // فتح نافذة الريست وإعطاء خيار لتغيير التاريخ/الوردية
   const initiateResetStand = (index) => {
     setResetBillets('');
     setResetNotes('');
+    setResetDateInput(formatDateToISO(currentProdDate)); // افتراضي على تاريخ الداشبورد
+    setResetShiftInput(selectedShift); // افتراضي على وردية الداشبورد
     setResetModal({ isOpen: true, standIndex: index });
+  };
+
+  // معالجة تغيير التاريخ داخل النافذة وتحديث الورديات المتاحة
+  const handleResetDateChange = (e) => {
+    const newD = e.target.value;
+    setResetDateInput(newD);
+    const isF = new Date(newD).getDay() === 5;
+    const validShifts = isF ? ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
+    if (!validShifts.includes(resetShiftInput)) {
+      setResetShiftInput(validShifts[0]);
+    }
   };
 
   // تنفيذ الريست الذكي
@@ -289,27 +316,28 @@ export default function App() {
     const index = resetModal.standIndex;
     const newStands = [...stands];
     
-    const bCount = Number(resetBillets) || 0; // البليت قبل التغيير
+    const bCount = Number(resetBillets) || 0; 
     const addedTonsBeforeChange = bCount * billetWeight;
     
-    // إجمالي الأطنان النهائي للممر القديم
     const finalOldPassTons = newStands[index].accumulatedTons + addedTonsBeforeChange;
+    
+    const selectedDateGB = formatDateToGB(resetDateInput) || new Date().toLocaleDateString('en-GB');
 
     const newChangeLog = {
       id: Date.now(),
       standId: newStands[index].id,
       tons: finalOldPassTons,
-      date: new Date().toLocaleDateString('en-GB'),
+      date: selectedDateGB,
       time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      shift: resetShiftInput, // حفظ الوردية التي تم اختيارها
       notes: resetNotes || 'بدون ملاحظات',
       productSize: selectedProductSize,
       billetsAtChange: bCount
     };
     const updatedPassChanges = [newChangeLog, ...passChanges];
 
-    // السر هنا: بنخلي العداد بالسالب عشان يخصم اللي اتعمل لما الفني يحفظ الوردية كاملة
     newStands[index].accumulatedTons = -addedTonsBeforeChange;
-    newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
+    newStands[index].lastResetDate = selectedDateGB;
 
     saveToCloud(newStands, null, null, null, updatedPassChanges);
     setResetModal({ isOpen: false, standIndex: null });
@@ -443,7 +471,6 @@ export default function App() {
     ======================================================
   */
   
-  // شاشة الدخول
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
@@ -478,7 +505,10 @@ export default function App() {
     );
   }
 
-  // الواجهة الرئيسية
+  // حساب الورديات المتاحة داخل نافذة الريست
+  const isResetDateFriday = resetDateInput ? new Date(resetDateInput).getDay() === 5 : false;
+  const resetModalShifts = isResetDateFriday ? ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
+
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
@@ -503,32 +533,54 @@ export default function App() {
         </div>
       )}
 
-      {/* ----------------- نافذة الريست الذكي ----------------- */}
+      {/* ----------------- نافذة الريست الذكي (بها اختيار التاريخ والوردية) ----------------- */}
       {resetModal.isOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-300">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300">
             <div className="bg-slate-800 p-3 flex justify-between items-center text-white">
               <h3 className="font-bold text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4"/> تصفير ممر الدرفيل</h3>
               <button onClick={() => setResetModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5"/></button>
             </div>
             <div className="p-4 flex flex-col gap-3">
-              <p className="text-xs text-slate-600 font-bold bg-blue-50 p-2 rounded border border-blue-100">
-                لو تم التغيير في منتصف الوردية، اكتب الممر القديم عمل كام بليت، عشان النظام يفصل إنتاجيته عن الممر الجديد أوتوماتيك.
+              <p className="text-[11px] text-slate-600 font-bold bg-blue-50 p-2 rounded border border-blue-100 leading-relaxed">
+                حدد التاريخ والوردية التي تم فيها التغيير. (إذا كان التغيير في منتصف الوردية، اكتب الممر القديم عمل كام بليت، لخصمها من الممر الجديد).
               </p>
               
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-700">عدد البليت للممر القديم (في الوردية الحالية):</label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-700">تاريخ التغيير:</label>
+                  <input 
+                    type="date" 
+                    value={resetDateInput} 
+                    onChange={handleResetDateChange} 
+                    className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs focus:border-blue-500 outline-none cursor-pointer" 
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-slate-700">الوردية:</label>
+                  <select 
+                    value={resetShiftInput} 
+                    onChange={(e) => setResetShiftInput(e.target.value)} 
+                    className="w-full bg-white border border-slate-300 text-[10px] font-bold p-1.5 rounded outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    {resetModalShifts.map(shift => <option key={shift} value={shift}>{shift}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1 mt-1">
+                <label className="text-[10px] font-bold text-slate-700">عدد بليت الممر القديم (قبل تغييره في نفس الوردية):</label>
                 <input 
                   type="number" 
                   value={resetBillets} 
                   onChange={e => setResetBillets(e.target.value)} 
                   className="w-full border border-slate-300 rounded p-2 font-mono text-sm focus:border-blue-500 outline-none" 
-                  placeholder="مثال: 45 (اختياري)" 
+                  placeholder="اتركه فارغاً إذا لم ينتج شيئاً بالوردية المحددة" 
                 />
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-slate-700">ملاحظات أو سبب التغيير:</label>
+                <label className="text-[10px] font-bold text-slate-700">ملاحظات أو سبب التغيير:</label>
                 <textarea 
                   rows="2"
                   value={resetNotes} 
@@ -539,14 +591,14 @@ export default function App() {
               </div>
 
               <button onClick={confirmResetStand} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow mt-2">
-                تأكيد التصفير والتسجيل
+                تأكيد التصفير وحفظ السجل
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ----------------- سجل الممر المحدد (نافذة منبثقة) ----------------- */}
+      {/* ----------------- سجل الممر المحدد ----------------- */}
       {historyModal.isOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col max-h-[80vh]">
@@ -561,7 +613,7 @@ export default function App() {
                 passChanges.filter(c => c.standId === historyModal.standId).map(change => (
                   <div key={change.id} className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-1.5">
                     <div className="flex justify-between items-center border-b border-slate-100 pb-1">
-                      <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{change.date} | {change.time}</span>
+                      <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{change.date} | {change.shift && <span className="text-blue-700">{change.shift}</span>}</span>
                       <span className="text-[11px] font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">إنتاج: {change.tons.toFixed(1)} طن</span>
                     </div>
                     <div className="flex justify-between text-[10px] text-slate-600 font-bold mt-1">
@@ -758,10 +810,8 @@ export default function App() {
           {/* شبكة الستاندات */}
           <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-1">
             {stands.map((stand, idx) => {
-              // السماح بإظهار القيمة السالبة إن وجدت (كإثبات لخصم الوردية)، ولكن شريط النسبة لا يقل عن صفر
               const displayTons = stand.accumulatedTons; 
               const percentage = Math.max(0, Math.min((stand.accumulatedTons / stand.maxLimit) * 100, 100));
-
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
 
               return (
@@ -771,7 +821,6 @@ export default function App() {
                   <div className="flex justify-between items-start z-10">
                     <div className="flex items-center gap-1">
                       <span className="font-black text-sm sm:text-base text-slate-800">St. {stand.id}</span>
-                      {/* زر سجل الممر */}
                       <button onClick={() => setHistoryModal({ isOpen: true, standId: stand.id })} className="p-0.5 sm:p-1 text-blue-600 bg-blue-100 hover:bg-blue-200 rounded transition-colors" title="سجل الممر">
                         <History className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       </button>
@@ -787,7 +836,6 @@ export default function App() {
                   </div>
                   
                   {currentUser === 'tech' ? (
-                    // تم تعديل زر التصفير لفتح النافذة الذكية
                     <button onClick={() => initiateResetStand(idx)} className="w-full mt-auto py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[10px] sm:text-xs font-bold rounded-md z-10 active:scale-95 transition-transform shadow">تصفير الدرفيل</button>
                   ) : (
                     <div className="mt-auto pt-1.5 border-t border-black/10 flex items-center justify-between gap-1 z-10 w-full">
@@ -840,7 +888,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* سجل تغيير الممرات الشامل (تم توسيع الأعمدة للشاشات الكبيرة) */}
+              {/* سجل تغيير الممرات الشامل (مع استغلال عرض الشاشة) */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
                 <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                   <RotateCcw className="w-4 h-4 text-orange-500" />
@@ -861,12 +909,12 @@ export default function App() {
                           </span>
                         </div>
                         <div className="flex justify-between text-[9px] text-slate-500 mt-1 font-bold">
-                          <span>مقاس: {change.productSize} مم</span>
-                          <span>بليت قبل التغيير: {change.billetsAtChange || 0}</span>
+                          <span>{change.productSize} مم</span>
+                          <span>بليت قديم: {change.billetsAtChange || 0}</span>
                         </div>
                         <div className="flex justify-between text-[8px] text-slate-400 font-mono mt-0.5">
                           <span dir="ltr">{change.date}</span>
-                          <span dir="ltr">{change.time}</span>
+                          <span dir="ltr">{change.shift}</span>
                         </div>
                         <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded mt-1 border border-slate-100 line-clamp-2" title={change.notes}>
                           <span className="font-bold text-blue-600">ملاحظات:</span> {change.notes}
