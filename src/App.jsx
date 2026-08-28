@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud } from 'lucide-react';
+import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud, FileText } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -78,6 +78,7 @@ export default function App() {
   const [stands, setStands] = useState(initialStands);
   const [shiftBillets, setShiftBillets] = useState(''); 
   const [productionArchive, setProductionArchive] = useState([]); 
+  const [passChanges, setPassChanges] = useState([]); // سجل تغيير الممرات الجديد
   const [isDataLoaded, setIsDataLoaded] = useState(false); 
   
   const [billetWeight, setBilletWeight] = useState(0.75); 
@@ -85,6 +86,21 @@ export default function App() {
   const [customLogo, setCustomLogo] = useState(""); 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
+
+  // ======================================================
+  // نظام النوافذ المنبثقة (Modals) بديلاً للـ alert و confirm
+  // ======================================================
+  const [modal, setModal] = useState({ isOpen: false, type: '', title: '', message: '', inputPlaceholder: '', onConfirm: null });
+  const [modalInput, setModalInput] = useState('');
+
+  const closeBox = () => setModal({ ...modal, isOpen: false });
+
+  const showAlert = (title, message) => setModal({ isOpen: true, type: 'alert', title, message, onConfirm: closeBox });
+  const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, type: 'confirm', title, message, onConfirm });
+  const showPrompt = (title, message, inputPlaceholder, onConfirm) => {
+    setModalInput('');
+    setModal({ isOpen: true, type: 'prompt', title, message, inputPlaceholder, onConfirm });
+  };
 
   /* ======================================================
     3. الاتصال وجلب البيانات (useEffect)
@@ -101,6 +117,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
+    const passChangesRef = doc(db, 'factory', appId, 'data', 'passChangesState'); 
     const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); 
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
@@ -114,6 +131,11 @@ export default function App() {
       else setDoc(archiveRef, { archiveList: [] });
     });
 
+    const unsubPassChanges = onSnapshot(passChangesRef, (docSnap) => {
+      if (docSnap.exists()) setPassChanges(docSnap.data().passChangesList || []);
+      else setDoc(passChangesRef, { passChangesList: [] });
+    });
+
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -124,7 +146,7 @@ export default function App() {
       }
     });
 
-    return () => { unsubStands(); unsubArchive(); unsubSettings(); };
+    return () => { unsubStands(); unsubArchive(); unsubPassChanges(); unsubSettings(); };
   }, [userAuth]);
 
   /* ======================================================
@@ -178,7 +200,7 @@ export default function App() {
   };
 
   /* ======================================================
-    5. دوال التشغيل الرئيسية
+    5. دوال التشغيل والحفظ السحابي
     ======================================================
   */
   const handleProductSizeChange = (size) => {
@@ -190,7 +212,7 @@ export default function App() {
       }
       return { ...stand, isActive: active };
     });
-    saveToCloud(newStands, null, null, null);
+    saveToCloud(newStands, null, null, null, null);
   };
 
   const getStandStatus = (tons, limit) => {
@@ -200,11 +222,12 @@ export default function App() {
     return { color: 'good', bg: 'bg-slate-50', border: 'border-slate-300', bar: 'bg-green-500', text: 'text-slate-700' };
   };
 
-  const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl) => {
+  const saveToCloud = async (newStands, newArchive, newWeight, newLogoUrl, newPassChanges) => {
     if (userAuth && db) {
       try {
         if (newStands) await setDoc(doc(db, 'factory', appId, 'data', 'standsState'), { standsList: newStands });
         if (newArchive) await setDoc(doc(db, 'factory', appId, 'data', 'archiveState'), { archiveList: newArchive });
+        if (newPassChanges) await setDoc(doc(db, 'factory', appId, 'data', 'passChangesState'), { passChangesList: newPassChanges });
         
         const settingsUpdate = {};
         if (newWeight !== undefined && newWeight !== null) settingsUpdate.billetWeight = newWeight;
@@ -219,6 +242,7 @@ export default function App() {
       if (newArchive) setProductionArchive(newArchive);
       if (newWeight !== undefined && newWeight !== null) setBilletWeight(newWeight);
       if (newLogoUrl !== undefined && newLogoUrl !== null) setCustomLogo(newLogoUrl);
+      if (newPassChanges) setPassChanges(newPassChanges);
     }
   };
 
@@ -231,7 +255,7 @@ export default function App() {
     const file = e.target.files[0];
     if (file) {
       if (file.size > 1024 * 1024) {
-        alert("حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 1 ميجابايت.");
+        showAlert("خطأ", "حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 1 ميجابايت.");
         return;
       }
       const reader = new FileReader();
@@ -244,7 +268,7 @@ export default function App() {
 
   const handleSaveSettings = () => {
     if (tempLogoUrl && tempLogoUrl.trim() !== '') {
-      saveToCloud(null, null, null, tempLogoUrl.trim());
+      saveToCloud(null, null, null, tempLogoUrl.trim(), null);
     }
     setIsSettingsOpen(false);
   };
@@ -252,34 +276,55 @@ export default function App() {
   const handleToggleActive = (index) => {
     const newStands = [...stands];
     newStands[index].isActive = !newStands[index].isActive;
-    saveToCloud(newStands, null, null, null);
+    saveToCloud(newStands, null, null, null, null);
   };
 
+  // تعديل دالة الريست لتسأل عن سبب تغيير الممر وتحفظه في السجل
   const handleResetStand = (index) => {
-    if(window.confirm(`هل أنت متأكد من تصفير وتغيير درافيل ستاند رقم ${stands[index].id}؟`)) {
-      const newStands = [...stands];
-      newStands[index].accumulatedTons = 0;
-      newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
-      saveToCloud(newStands, null, null, null);
-    }
+    showPrompt(
+      "تغيير ممر الدرفيل", 
+      `سيتم تصفير ستاند رقم ${stands[index].id}. يرجى كتابة ملاحظات التغيير (اختياري):`, 
+      "مثال: تآكل في الممر، تغيير مقاس...", 
+      (reason) => {
+        const newStands = [...stands];
+        const producedTonsBeforeReset = newStands[index].accumulatedTons; // الأطنان قبل التصفير
+        
+        newStands[index].accumulatedTons = 0;
+        newStands[index].lastResetDate = new Date().toLocaleDateString('en-GB');
+
+        // تسجيل حدث التغيير
+        const newChangeLog = {
+          id: Date.now(),
+          standId: newStands[index].id,
+          tons: producedTonsBeforeReset,
+          date: new Date().toLocaleDateString('en-GB'),
+          time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+          notes: reason || 'بدون ملاحظات',
+          productSize: selectedProductSize
+        };
+        const updatedPassChanges = [newChangeLog, ...passChanges];
+
+        saveToCloud(newStands, null, null, null, updatedPassChanges);
+      }
+    );
   };
 
   const handleResetAllStands = () => {
-    if(window.confirm('تحذير شديد: هل أنت متأكد من تصفير كافة عدادات الستاندات بالكامل؟')) {
+    showConfirm('تحذير شديد', 'هل أنت متأكد من تصفير كافة العدادات بالكامل؟ (لن يتم تسجيل أسباب التغيير في السجل الجماعي)', () => {
       const newStands = stands.map(stand => ({
         ...stand,
         accumulatedTons: 0,
         lastResetDate: new Date().toLocaleDateString('en-GB')
       }));
-      saveToCloud(newStands, null, null, null);
-    }
+      saveToCloud(newStands, null, null, null, null);
+    });
   };
 
   const handleClearArchive = () => {
-    if(window.confirm('تحذير نهائي: هل أنت متأكد من مسح جميع بيانات الأرشيف القديمة بشكل كامل والبدء من جديد؟')) {
-      saveToCloud(stands, [], null, null);
-      alert('تم مسح الأرشيف بنجاح.');
-    }
+    showConfirm('تحذير نهائي', 'هل أنت متأكد من مسح جميع بيانات الأرشيف القديمة وسجل الممرات بالكامل والبدء من جديد؟', () => {
+      saveToCloud(stands, [], null, null, []);
+      showAlert('تمت العملية', 'تم مسح الأرشيف وسجل الممرات بنجاح.');
+    });
   }
 
   const handleLimitChange = (index, newValue) => {
@@ -287,14 +332,14 @@ export default function App() {
     if (val > 0) {
       const newStands = [...stands];
       newStands[index].maxLimit = val;
-      saveToCloud(newStands, null, null, null);
+      saveToCloud(newStands, null, null, null, null);
     }
   };
 
   const handleWeightChange = (newVal) => {
     const val = Number(newVal);
     if (val > 0) {
-      saveToCloud(null, null, val, null);
+      saveToCloud(null, null, val, null, null);
     }
   };
 
@@ -336,7 +381,7 @@ export default function App() {
       newArchive = [newArchiveLog, ...newArchive];
     }
 
-    saveToCloud(newStands, newArchive, null, null); 
+    saveToCloud(newStands, newArchive, null, null, null); 
 
     const currentDayShifts = currentProdDate.getDay() === 5 ? 
        ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : 
@@ -351,7 +396,7 @@ export default function App() {
       
       const nextIsFriday = nextDate.getDay() === 5;
       setSelectedShift(nextIsFriday ? 'الوردية الأولى (12 ساعة)' : 'الوردية الأولى');
-      alert(`تم تسجيل الإنتاج وإقفال اليوم بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+      showAlert('تم الإقفال', `تم إقفال يوم ${dayNameStr} وتسجيل إنتاج ${selectedShift} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
     } else if (currentShiftIndex >= 0) {
       setSelectedShift(currentDayShifts[currentShiftIndex + 1]);
     } else {
@@ -431,6 +476,42 @@ export default function App() {
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
       
+      {/* ----------------- النوافذ المنبثقة (Modals) ----------------- */}
+      {modal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200">
+            <div className="p-5">
+              <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                {modal.type === 'alert' ? <CheckCircle className="text-green-500 w-5 h-5"/> : modal.type === 'confirm' ? <AlertTriangle className="text-orange-500 w-5 h-5"/> : <Edit3 className="text-blue-500 w-5 h-5"/>}
+                {modal.title}
+              </h3>
+              <p className="text-sm text-slate-600 mt-2 leading-relaxed">{modal.message}</p>
+              {modal.type === 'prompt' && (
+                <input 
+                  type="text" 
+                  autoFocus 
+                  value={modalInput} 
+                  onChange={e => setModalInput(e.target.value)} 
+                  placeholder={modal.inputPlaceholder} 
+                  className="w-full mt-4 p-2.5 border border-slate-300 rounded-lg font-bold text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none" 
+                />
+              )}
+            </div>
+            <div className="bg-slate-50 p-3 flex justify-end gap-2 border-t border-slate-100">
+              {modal.type !== 'alert' && (
+                <button onClick={closeBox} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg font-bold text-slate-700 text-xs transition-colors">إلغاء</button>
+              )}
+              <button 
+                onClick={() => { if(modal.onConfirm) modal.onConfirm(modalInput); closeBox(); }} 
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs shadow transition-colors"
+              >
+                موافق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* نافذة رفع اللوجو */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -470,11 +551,10 @@ export default function App() {
         </div>
       )}
 
-      {/* الشريط العلوي (تم ضبط التوسيط والظهور على الموبايل هنا) */}
+      {/* الشريط العلوي */}
       <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm">
         <div className="flex justify-between items-center relative h-10">
           
-          {/* الجانب الأيمن (اللوجو) */}
           <div className="flex items-center gap-2 z-10">
             {customLogo && (
               <div className="bg-white p-1 rounded shadow-sm flex shrink-0">
@@ -484,12 +564,10 @@ export default function App() {
             <span className="font-bold text-xs sm:text-sm hidden md:inline text-slate-100">Roll Tracker</span>
           </div>
 
-          {/* المنتصف (الساعة) */}
           <div className="absolute left-1/2 -translate-x-1/2 z-0">
             <LiveClock />
           </div>
 
-          {/* الجانب الأيسر (التحكم) */}
           <div className="flex items-center gap-1.5 sm:gap-2 z-10">
             {currentUser === 'manager' && (
                <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 transition-colors shadow-sm" title="إعدادات النظام">
@@ -504,7 +582,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* شريط التنقل + قائمة مقاس المنتج */}
         <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center z-10 relative">
           <div className="flex gap-2 w-full sm:w-auto">
              <button onClick={() => setActiveTab('dashboard')} className={`flex-1 sm:flex-none px-4 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><TrendingUp className="w-3 h-3" /> التشغيل</button>
@@ -611,8 +688,8 @@ export default function App() {
             </div>
           )}
 
-          {/* شبكة الستاندات المتسعة (Grid) */}
-          <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-4">
+          {/* شبكة الستاندات */}
+          <div className="flex-1 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 overflow-y-auto pr-1 pb-1">
             {stands.map((stand, idx) => {
               const status = getStandStatus(stand.accumulatedTons, stand.maxLimit);
               const percentage = Math.min((stand.accumulatedTons / stand.maxLimit) * 100, 100);
@@ -658,101 +735,129 @@ export default function App() {
             </div>
           </div>
           
-          {aggregatedLogs.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 flex flex-col items-center gap-2">
-              <BarChart3 className="w-10 h-10 opacity-30" />
-              <p className="text-sm font-bold">لا توجد بيانات إنتاجية مسجلة لعرض الرسومات البيانية بعد.</p>
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center shadow-sm">
+                <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
+                <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
+                  {aggregatedLogs.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
+                </p>
+              </div>
+              <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center shadow-sm">
+                <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
+                <p className="font-mono font-black text-lg sm:text-xl text-green-900">
+                  {aggregatedLogs.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
+                </p>
+              </div>
+              <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center shadow-sm">
+                <p className="text-[10px] font-bold text-purple-800">الورديات المسجلة</p>
+                <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
+                  {aggregatedLogs.length}
+                </p>
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-200 text-center shadow-sm">
-                  <p className="text-[10px] font-bold text-blue-800">إجمالي الأطنان</p>
-                  <p className="font-mono font-black text-lg sm:text-xl text-blue-900">
-                    {aggregatedLogs.reduce((acc, curr) => acc + curr.tons, 0).toFixed(1)} <span className="text-xs font-normal">طن</span>
-                  </p>
-                </div>
-                <div className="bg-green-50 p-2.5 rounded-lg border border-green-200 text-center shadow-sm">
-                  <p className="text-[10px] font-bold text-green-800">إجمالي البليت</p>
-                  <p className="font-mono font-black text-lg sm:text-xl text-green-900">
-                    {aggregatedLogs.reduce((acc, curr) => acc + curr.billets, 0)} <span className="text-xs font-normal">بليت</span>
-                  </p>
-                </div>
-                <div className="bg-purple-50 p-2.5 rounded-lg border border-purple-200 text-center shadow-sm">
-                  <p className="text-[10px] font-bold text-purple-800">الورديات المسجلة</p>
-                  <p className="font-mono font-black text-lg sm:text-xl text-purple-900">
-                    {aggregatedLogs.length}
-                  </p>
-                </div>
+
+            {/* سجل تغيير الممرات (الجديد) */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
+              <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                <RotateCcw className="w-4 h-4 text-orange-500" />
+                <h3 className="font-bold text-xs text-slate-700">سجل تغيير الممرات (تصفير الستاندات)</h3>
               </div>
-
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
-                  <span className="text-[9px] text-slate-400 font-mono">آخر 10 ورديات مسجلة</span>
-                </div>
-                
-                <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
-                  <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
-                    <defs>
-                      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-                    
-                    {(() => {
-                      const maxVal = Math.max(...aggregatedLogs.map(l => l.tons), 1);
-                      const pointsData = [...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
-                      
-                      const points = pointsData.map((log, idx, arr) => {
-                        const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
-                        const y = 90 - (log.tons / maxVal) * 80;
-                        return `${x},${y}`;
-                      });
-                      
-                      const pathD = `M ${points.join(' L ')}`;
-                      const areaD = `${pathD} L 95,95 L 5,95 Z`;
-
-                      return (
-                        <>
-                          <path d={areaD} fill="url(#grad)" />
-                          <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-                          {points.map((pt, i) => {
-                            const [cx, cy] = pt.split(',');
-                            return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
-                          })}
-                        </>
-                      );
-                    })()}
-                  </svg>
-                </div>
-                <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
-                  <span>الأقدم</span>
-                  <span>الأحدث</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <h3 className="font-bold text-xs text-slate-700">سجل أداء الورديات الإجمالي:</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
-                    <div key={i} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center hover:bg-white transition-colors cursor-default shadow-sm hover:shadow-md">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
-                        <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
-                        <span className="text-[8px] text-slate-400 font-mono">تحديث: {log.time}</span>
+              {passChanges.length === 0 ? (
+                <p className="text-[10px] text-slate-500 text-center py-2">لم يتم تسجيل أي تغيير للممرات حتى الآن.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                  {passChanges.map(change => (
+                    <div key={change.id} className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex flex-col gap-1">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-[11px] text-slate-800 flex items-center gap-1">
+                          <Settings2 className="w-3 h-3 text-slate-400" /> ستاند {change.standId}
+                        </span>
+                        <span className="text-[9px] font-bold bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded">إنتاج: {change.tons.toFixed(1)} طن</span>
                       </div>
-                      <div className="text-left font-mono">
-                        <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
-                        <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                      <div className="flex justify-between text-[9px] text-slate-500 mt-1">
+                        <span>مقاس: {change.productSize} مم</span>
+                        <span dir="ltr">{change.date} {change.time}</span>
                       </div>
+                      <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded mt-1 border border-slate-100">
+                        <span className="font-bold text-blue-600">ملاحظات:</span> {change.notes}
+                      </p>
                     </div>
                   ))}
                 </div>
-              </div>
+              )}
             </div>
-          )}
+
+            {aggregatedLogs.length > 0 && (
+              <>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-xs text-slate-700">مؤشر اتجاه الإنتاج (Production Trend)</h3>
+                    <span className="text-[9px] text-slate-400 font-mono">آخر 10 ورديات مسجلة</span>
+                  </div>
+                  
+                  <div className="w-full h-40 bg-white rounded-lg border border-slate-200 p-2 relative flex items-end">
+                    <svg className="absolute inset-0 w-full h-full p-4 overflow-visible" preserveAspectRatio="none" viewBox="0 0 100 100">
+                      <defs>
+                        <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+                      
+                      {(() => {
+                        const maxVal = Math.max(...aggregatedLogs.map(l => l.tons), 1);
+                        const pointsData = [...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).slice(0, 10).reverse();
+                        
+                        const points = pointsData.map((log, idx, arr) => {
+                          const x = arr.length === 1 ? 50 : (idx / (arr.length - 1)) * 90 + 5;
+                          const y = 90 - (log.tons / maxVal) * 80;
+                          return `${x},${y}`;
+                        });
+                        
+                        const pathD = `M ${points.join(' L ')}`;
+                        const areaD = `${pathD} L 95,95 L 5,95 Z`;
+
+                        return (
+                          <>
+                            <path d={areaD} fill="url(#grad)" />
+                            <path d={pathD} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                            {points.map((pt, i) => {
+                              const [cx, cy] = pt.split(',');
+                              return <circle key={i} cx={cx} cy={cy} r="4" className="fill-blue-600 stroke-white stroke-2" />;
+                            })}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+                  <div className="flex justify-between text-[9px] text-slate-400 font-mono px-1">
+                    <span>الأقدم</span>
+                    <span>الأحدث</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <h3 className="font-bold text-xs text-slate-700 flex items-center gap-1"><FileText className="w-4 h-4 text-blue-600"/> سجل أداء الورديات الإجمالي:</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[...aggregatedLogs].sort((a,b) => b.timestamp - a.timestamp).map((log, i) => (
+                      <div key={i} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex justify-between items-center hover:bg-white transition-colors cursor-default shadow-sm hover:shadow-md">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-xs text-slate-800">{log.date} ({log.shift})</span>
+                          <span className="text-[10px] text-blue-600 font-bold mt-0.5">مقاس المنتج: {log.productSize || '10'} مم</span>
+                          <span className="text-[8px] text-slate-400 font-mono">تحديث: {log.time}</span>
+                        </div>
+                        <div className="text-left font-mono">
+                          <div className="text-xs font-black text-green-700">{log.tons.toFixed(1)} طن</div>
+                          <div className="text-[10px] text-slate-500">{log.billets} بليت</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
