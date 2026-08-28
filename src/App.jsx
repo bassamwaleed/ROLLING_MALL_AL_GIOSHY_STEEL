@@ -300,7 +300,6 @@ export default function App() {
     setResetModal({ isOpen: true, standIndex: index });
   };
 
-  // معالجة تغيير التاريخ داخل النافذة وتحديث الورديات المتاحة
   const handleResetDateChange = (e) => {
     const newD = e.target.value;
     setResetDateInput(newD);
@@ -311,32 +310,41 @@ export default function App() {
     }
   };
 
-  // تنفيذ الريست الذكي
+  // تنفيذ الريست الذكي - التعديل الجذري هنا
   const confirmResetStand = () => {
     const index = resetModal.standIndex;
     const newStands = [...stands];
     
-    const bCount = Number(resetBillets) || 0; 
-    const addedTonsBeforeChange = bCount * billetWeight;
+    // عدد البليت اللي عمله الممر القديم
+    const oldPassBillets = Number(resetBillets) || 0; 
+    const oldPassTons = oldPassBillets * billetWeight;
     
-    const finalOldPassTons = newStands[index].accumulatedTons + addedTonsBeforeChange;
+    // إجمالي إنتاج الستاند الحالي قبل الريست
+    const totalCurrentTons = newStands[index].accumulatedTons;
+    
+    // لو إنت مدخلتش بليت للممر القديم، يعتبر إن كل الإنتاج للممر القديم
+    const finalOldPassTons = oldPassBillets > 0 ? oldPassTons : totalCurrentTons;
     
     const selectedDateGB = formatDateToGB(resetDateInput) || new Date().toLocaleDateString('en-GB');
 
     const newChangeLog = {
       id: Date.now(),
       standId: newStands[index].id,
-      tons: finalOldPassTons,
+      tons: finalOldPassTons, // إنتاج الممر القديم
       date: selectedDateGB,
       time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-      shift: resetShiftInput, // حفظ الوردية التي تم اختيارها
+      shift: resetShiftInput, 
       notes: resetNotes || 'بدون ملاحظات',
       productSize: selectedProductSize,
-      billetsAtChange: bCount
+      billetsAtChange: oldPassBillets
     };
     const updatedPassChanges = [newChangeLog, ...passChanges];
 
-    newStands[index].accumulatedTons = -addedTonsBeforeChange;
+    // اللوجيك الذكي: إنتاج الممر الجديد = الإجمالي الحالي - إنتاج الممر القديم
+    // لو الإجمالي الحالي كان 788، والقديم عمل 50، الممر الجديد هيبقى عمل 738.
+    const newPassTons = Math.max(0, totalCurrentTons - finalOldPassTons);
+
+    newStands[index].accumulatedTons = newPassTons;
     newStands[index].lastResetDate = selectedDateGB;
 
     saveToCloud(newStands, null, null, null, updatedPassChanges);
@@ -505,7 +513,6 @@ export default function App() {
     );
   }
 
-  // حساب الورديات المتاحة داخل نافذة الريست
   const isResetDateFriday = resetDateInput ? new Date(resetDateInput).getDay() === 5 : false;
   const resetModalShifts = isResetDateFriday ? ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
 
@@ -533,7 +540,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ----------------- نافذة الريست الذكي (بها اختيار التاريخ والوردية) ----------------- */}
+      {/* ----------------- نافذة الريست الذكي المحدثة ----------------- */}
       {resetModal.isOpen && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300">
@@ -543,7 +550,7 @@ export default function App() {
             </div>
             <div className="p-4 flex flex-col gap-3">
               <p className="text-[11px] text-slate-600 font-bold bg-blue-50 p-2 rounded border border-blue-100 leading-relaxed">
-                حدد التاريخ والوردية التي تم فيها التغيير. (إذا كان التغيير في منتصف الوردية، اكتب الممر القديم عمل كام بليت، لخصمها من الممر الجديد).
+                حدد التاريخ والوردية التي تم فيها التغيير. (اكتب الممر القديم عمل كام بليت ليتم خصمها من الإجمالي الحالي وإضافتها لسجل الممر القديم).
               </p>
               
               <div className="grid grid-cols-2 gap-2">
@@ -569,13 +576,13 @@ export default function App() {
               </div>
 
               <div className="flex flex-col gap-1 mt-1">
-                <label className="text-[10px] font-bold text-slate-700">عدد بليت الممر القديم (قبل تغييره في نفس الوردية):</label>
+                <label className="text-[10px] font-bold text-slate-700">عدد بليت الممر القديم:</label>
                 <input 
                   type="number" 
                   value={resetBillets} 
                   onChange={e => setResetBillets(e.target.value)} 
                   className="w-full border border-slate-300 rounded p-2 font-mono text-sm focus:border-blue-500 outline-none" 
-                  placeholder="اتركه فارغاً إذا لم ينتج شيئاً بالوردية المحددة" 
+                  placeholder="اتركه فارغاً إذا أردت تصفير الإجمالي بالكامل للممر القديم" 
                 />
               </div>
 
@@ -888,7 +895,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* سجل تغيير الممرات الشامل (مع استغلال عرض الشاشة) */}
+              {/* سجل تغيير الممرات الشامل */}
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col gap-2 shadow-sm">
                 <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                   <RotateCcw className="w-4 h-4 text-orange-500" />
