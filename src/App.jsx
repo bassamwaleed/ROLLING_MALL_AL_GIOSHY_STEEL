@@ -497,11 +497,11 @@ export default function App() {
             <CheckCircle className="w-4 h-4" /> نظام متصل بالسحابة
           </p>
           {!isDataLoaded ? (
-            <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال بقاعدة البيانات...</div>
+            <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال وتجميع البيانات...</div>
           ) : (
             <div className="space-y-4">
               <button onClick={() => setCurrentUser('tech')} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 p-4 rounded-lg font-bold transition-colors shadow-lg">
-                <Edit3 className="w-5 h-5" /> دخول فني الإنتاج
+                <Edit3 className="w-5 h-5" /> دخول فني 
               </button>
               <button onClick={() => setCurrentUser('manager')} className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 p-4 rounded-lg font-bold transition-colors shadow-lg">
                 <TrendingUp className="w-5 h-5" /> دخول إدارة المصنع
@@ -670,7 +670,7 @@ export default function App() {
               )}
 
               <button onClick={handleSaveSettings} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex justify-center items-center gap-2 shadow-md mt-2">
-                <Save className="w-4 h-4" /> تطبيق الشعار
+                <Save className="w-4 h-4" /> حفظ الشعار
               </button>
             </div>
           </div>
@@ -723,11 +723,11 @@ export default function App() {
                  onChange={(e) => handleProductSizeChange(e.target.value)}
                  className="bg-white text-slate-900 text-xs font-bold px-2 py-1 rounded outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-auto cursor-pointer"
                >
-                  <option value="10">10 مم</option>
-                  <option value="12">12 مم</option>
-                  <option value="16">16 مم</option>
-                  <option value="18">18 مم</option>
-                  <option value="22">22 مم</option>
+                  <option value="10">مقاس 10 مم</option>
+                  <option value="12">مقاس 12 مم</option>
+                  <option value="16">مقاس 16 مم</option>
+                  <option value="18">مقاس 18 مم</option>
+                  <option value="22">مقاس 22 مم</option>
                </select>
              </div>
           )}
@@ -749,7 +749,7 @@ export default function App() {
               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 mt-1">
                 <div className="flex items-center gap-1.5 shrink-0">
                   <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
+                  <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
                   <input 
                     type="number" 
                     step="0.01" 
@@ -760,7 +760,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2 shrink-0">
                   <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
-                    <RefreshCw className="w-3 h-3" /> تصفير الستاندات
+                    <RefreshCw className="w-3 h-3" /> تصفير جميع الستاندات
                   </button>
                   <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
                     <Trash2 className="w-3 h-3" /> مسح الأرشيف
