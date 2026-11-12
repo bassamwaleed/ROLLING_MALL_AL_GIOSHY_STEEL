@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, Sliders, Trash2, Clock, Settings, X, UploadCloud, FileText, History } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, increment } from 'firebase/firestore';
 
 /* ======================================================
   1. منطقة إعدادات قاعدة البيانات (Firebase)
@@ -52,6 +52,12 @@ const LiveClock = () => {
       </div>
     </div>
   );
+};
+
+// تشفير الأكواد (SHA-256) عشان مايتخزنش الكود نصاً
+const sha = async (t) => {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
 };
 
 // دوال مساعدة للتاريخ
@@ -108,6 +114,16 @@ export default function App() {
   
   const [historyModal, setHistoryModal] = useState({ isOpen: false, standId: null });
 
+  // صفحة الدرفيل + الأدمن + الدخول بالكود
+  const [rollView, setRollView] = useState({ open: false, idx: null, resetMode: false });
+  const [nextPass, setNextPass] = useState(null);
+  const [settings, setSettings] = useState({});
+  const [visits, setVisits] = useState({});
+  const [loginAs, setLoginAs] = useState(null);
+  const [codeInput, setCodeInput] = useState('');
+  const [loginErr, setLoginErr] = useState('');
+  const [adm, setAdm] = useState({ label: '', role: 'tech', code: '' });
+
   // النوافذ الأساسية
   const [modal, setModal] = useState({ isOpen: false, type: '', title: '', message: '', onConfirm: null });
   const closeBox = () => setModal({ ...modal, isOpen: false });
@@ -127,13 +143,19 @@ export default function App() {
 
   useEffect(() => {
     if (!userAuth || !db) return;
+    const t0 = setTimeout(() => setIsDataLoaded(true), 8000);
+    if (!sessionStorage.getItem('visited')) {
+      sessionStorage.setItem('visited', '1');
+      setDoc(doc(db, 'factory', appId, 'data', 'visitsState'), { total: increment(1), ['d_' + formatDateToISO(new Date())]: increment(1) }, { merge: true }).catch(() => {});
+    }
+    const unsubVisits = onSnapshot(doc(db, 'factory', appId, 'data', 'visitsState'), (d) => setVisits(d.exists() ? d.data() : {}));
     const standsRef = doc(db, 'factory', appId, 'data', 'standsState');
     const archiveRef = doc(db, 'factory', appId, 'data', 'archiveState');
     const passChangesRef = doc(db, 'factory', appId, 'data', 'passChangesState'); 
     const settingsRef = doc(db, 'factory', appId, 'data', 'settingsState'); 
 
     const unsubStands = onSnapshot(standsRef, (docSnap) => {
-      if (docSnap.exists()) setStands(docSnap.data().standsList);
+      if (docSnap.exists()) setStands(docSnap.data().standsList.map(s => ({ passCount: 4, passTons: {}, passOrder: [], activePass: null, entryDate: '', diameter: '', ...s })));
       else setDoc(standsRef, { standsList: initialStands });
       setIsDataLoaded(true);
     });
@@ -151,6 +173,7 @@ export default function App() {
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        setSettings(data);
         if (data.billetWeight) setBilletWeight(data.billetWeight);
         if (data.logoUrl) setCustomLogo(data.logoUrl);
       } else {
@@ -158,7 +181,7 @@ export default function App() {
       }
     });
 
-    return () => { unsubStands(); unsubArchive(); unsubPassChanges(); unsubSettings(); };
+    return () => { clearTimeout(t0); unsubVisits(); unsubStands(); unsubArchive(); unsubPassChanges(); unsubSettings(); };
   }, [userAuth]);
 
   /* ======================================================
@@ -286,13 +309,14 @@ export default function App() {
   };
 
   const handleToggleActive = (index) => {
-    const newStands = [...stands];
-    newStands[index].isActive = !newStands[index].isActive;
+    const newStands = stands.map((x, i) => i === index ? { ...x, isActive: !x.isActive } : x);
     saveToCloud(newStands, null, null, null, null);
   };
 
   // فتح نافذة الريست وإعطاء خيار لتغيير التاريخ/الوردية
-  const initiateResetStand = (index) => {
+  const initiateResetStand = (index) => setRollView({ open: true, idx: index, resetMode: true });
+  const openResetModal = (index, pass) => {
+    setNextPass(pass);
     setResetBillets('');
     setResetNotes('');
     setResetDateInput(formatDateToISO(currentProdDate)); // افتراضي على تاريخ الداشبورد
@@ -336,7 +360,9 @@ export default function App() {
       shift: resetShiftInput, 
       notes: resetNotes || 'بدون ملاحظات',
       productSize: selectedProductSize,
-      billetsAtChange: oldPassBillets
+      billetsAtChange: oldPassBillets,
+      passNo: stands[index].activePass || null,
+      nextPass: nextPass || null
     };
     const updatedPassChanges = [newChangeLog, ...passChanges];
 
@@ -344,8 +370,18 @@ export default function App() {
     // لو الإجمالي الحالي كان 788، والقديم عمل 50، الممر الجديد هيبقى عمل 738.
     const newPassTons = Math.max(0, totalCurrentTons - finalOldPassTons);
 
-    newStands[index].accumulatedTons = newPassTons;
-    newStands[index].lastResetDate = selectedDateGB;
+    const st = stands[index];
+    const cur = st.activePass;
+    const pt = st.passTons || {};
+    const ord = st.passOrder || [];
+    newStands[index] = {
+      ...st,
+      accumulatedTons: newPassTons,
+      lastResetDate: selectedDateGB,
+      passTons: cur ? { ...pt, [cur]: (pt[cur] || 0) + finalOldPassTons } : pt,
+      activePass: nextPass || cur,
+      passOrder: nextPass && !ord.includes(nextPass) ? [...ord, nextPass] : ord
+    };
 
     saveToCloud(newStands, null, null, null, updatedPassChanges);
     setResetModal({ isOpen: false, standIndex: null });
@@ -372,8 +408,7 @@ export default function App() {
   const handleLimitChange = (index, newValue) => {
     const val = Number(newValue);
     if (val > 0) {
-      const newStands = [...stands];
-      newStands[index].maxLimit = val;
+      const newStands = stands.map((x, i) => i === index ? { ...x, maxLimit: val } : x);
       saveToCloud(newStands, null, null, null, null);
     }
   };
@@ -479,6 +514,30 @@ export default function App() {
     ======================================================
   */
   
+  const tryLogin = async () => {
+    const h = await sha(codeInput.trim());
+    if (loginAs === 'admin') {
+      if (!settings.adminHash) {
+        if (codeInput.trim().length < 4) { setLoginErr('الكود لازم 4 أحرف على الأقل'); return; }
+        await saveSet({ adminHash: h });
+      } else if (settings.adminHash !== h) { setLoginErr('الكود غلط'); return; }
+    } else {
+      const list = (settings.codes || []).filter(c => c.role === loginAs);
+      if (list.length > 0 && !list.some(c => c.hash === h)) { setLoginErr('الكود غلط'); return; }
+    }
+    setCurrentUser(loginAs); setLoginAs(null); setCodeInput(''); setLoginErr('');
+  };
+
+  if (settings.maintOn && currentUser !== 'admin' && loginAs !== 'admin') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-6 text-center gap-4" dir="rtl">
+        <Settings2 className="w-16 h-16 text-yellow-400" />
+        <h1 className="text-xl font-black">{settings.maintMsg || 'جاري التحديث، برجاء المحاولة لاحقاً'}</h1>
+        <button onClick={() => { setCurrentUser('none'); setLoginAs('admin'); setLoginErr(''); setCodeInput(''); }} className="text-slate-600 text-xs font-bold">أدمن</button>
+      </div>
+    );
+  }
+
   if (currentUser === 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
@@ -500,14 +559,79 @@ export default function App() {
             <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال وتجميع البيانات...</div>
           ) : (
             <div className="space-y-4">
-              <button onClick={() => setCurrentUser('tech')} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 p-4 rounded-lg font-bold transition-colors shadow-lg">
+              {loginAs && (
+                <div className="bg-slate-900 p-3 rounded-lg border border-slate-600 space-y-2">
+                  <p className="text-xs font-bold text-slate-300">{loginAs === 'admin' ? (settings.adminHash ? 'كود الأدمن' : 'أول مرة: اكتب كود الأدمن الجديد') : 'اكتب كود الدخول'}</p>
+                  <input type="password" value={codeInput} onChange={e => setCodeInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && tryLogin()} className="w-full p-2 rounded text-center text-slate-900 font-mono outline-none" dir="ltr" autoFocus />
+                  {loginErr && <p className="text-red-400 text-xs font-bold">{loginErr}</p>}
+                  <div className="flex gap-2">
+                    <button onClick={tryLogin} className="flex-1 bg-blue-600 hover:bg-blue-700 p-2 rounded font-bold text-sm">دخول</button>
+                    <button onClick={() => setLoginAs(null)} className="px-3 bg-slate-700 rounded font-bold text-sm">إلغاء</button>
+                  </div>
+                </div>
+              )}
+              <button onClick={() => { setLoginAs('tech'); setLoginErr(''); setCodeInput(''); }} className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 p-4 rounded-lg font-bold transition-colors shadow-lg">
                 <Edit3 className="w-5 h-5" /> دخول فني 
               </button>
-              <button onClick={() => setCurrentUser('manager')} className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 p-4 rounded-lg font-bold transition-colors shadow-lg">
+              <button onClick={() => { setLoginAs('manager'); setLoginErr(''); setCodeInput(''); }} className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 p-4 rounded-lg font-bold transition-colors shadow-lg">
                 <TrendingUp className="w-5 h-5" /> دخول إدارة المصنع
               </button>
+              <button onClick={() => { setLoginAs('admin'); setLoginErr(''); setCodeInput(''); }} className="w-full text-slate-500 hover:text-slate-300 text-xs font-bold pt-2">أدمن</button>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  const saveSet = (p) => db && setDoc(doc(db, 'factory', appId, 'data', 'settingsState'), p, { merge: true });
+
+  if (currentUser === 'admin') {
+    const days = Object.keys(visits).filter(k => k.startsWith('d_')).sort().reverse().slice(0, 7);
+    const codes = settings.codes || [];
+    const addCode = async () => {
+      if (adm.code.trim().length < 4) return;
+      const hash = await sha(adm.code.trim());
+      await saveSet({ codes: [...codes, { id: Date.now(), label: adm.label || 'بدون اسم', role: adm.role, hash }] });
+      setAdm({ ...adm, label: '', code: '' });
+    };
+    const card = 'bg-white rounded-xl border border-slate-300 shadow-sm p-3 flex flex-col gap-2';
+    return (
+      <div className="min-h-screen bg-slate-100 p-3 flex flex-col gap-3 text-slate-900" dir="rtl">
+        <div className="flex justify-between items-center bg-slate-900 text-white p-3 rounded-xl">
+          <span className="font-black text-sm">لوحة الأدمن</span>
+          <button onClick={() => setCurrentUser('none')} className="text-red-400 text-xs font-bold">خروج</button>
+        </div>
+        <div className={card}>
+          <div className="flex justify-between items-center">
+            <span className="font-bold text-sm">حالة الموقع: {settings.maintOn ? 'مقفول (صيانة)' : 'شغال'}</span>
+            <button onClick={() => saveSet({ maintOn: !settings.maintOn })} className={`px-4 py-1.5 rounded font-bold text-xs text-white ${settings.maintOn ? 'bg-green-600' : 'bg-red-600'}`}>{settings.maintOn ? 'فتح الموقع' : 'قفل الموقع'}</button>
+          </div>
+          <input key={settings.maintMsg} defaultValue={settings.maintMsg || 'جاري التحديث، برجاء المحاولة لاحقاً'} onBlur={e => saveSet({ maintMsg: e.target.value })} className="border border-slate-300 rounded p-2 text-xs" placeholder="رسالة تظهر للمستخدمين" />
+        </div>
+        <div className={card}>
+          <span className="font-bold text-sm">أكواد الدخول</span>
+          <div className="grid grid-cols-2 gap-2">
+            <input value={adm.label} onChange={e => setAdm({ ...adm, label: e.target.value })} placeholder="الاسم" className="border border-slate-300 rounded p-2 text-xs" />
+            <select value={adm.role} onChange={e => setAdm({ ...adm, role: e.target.value })} className="border border-slate-300 rounded p-2 text-xs font-bold"><option value="tech">فني</option><option value="manager">مدير</option></select>
+            <input value={adm.code} onChange={e => setAdm({ ...adm, code: e.target.value })} placeholder="الكود (4 أحرف+)" className="border border-slate-300 rounded p-2 text-xs font-mono" dir="ltr" />
+            <button onClick={addCode} className="bg-blue-600 text-white rounded font-bold text-xs">إضافة كود</button>
+          </div>
+          {codes.length === 0 && <p className="text-[10px] text-slate-500 font-bold">مفيش أكواد: الدخول مفتوح للكل لحد ما تضيف كود لكل دور.</p>}
+          {codes.map(c => (
+            <div key={c.id} className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded p-2 text-xs font-bold">
+              <span>{c.label} <span className="text-blue-700">({c.role === 'tech' ? 'فني' : 'مدير'})</span></span>
+              <button onClick={() => saveSet({ codes: codes.filter(x => x.id !== c.id) })} className="text-red-600"><Trash2 className="w-4 h-4" /></button>
+            </div>
+          ))}
+        </div>
+        <div className={card}>
+          <span className="font-bold text-sm">الزيارات</span>
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="bg-blue-50 border border-blue-200 rounded p-2"><p className="text-[10px] font-bold text-blue-800">الإجمالي</p><p className="font-black text-xl font-mono">{visits.total || 0}</p></div>
+            <div className="bg-green-50 border border-green-200 rounded p-2"><p className="text-[10px] font-bold text-green-800">النهاردة</p><p className="font-black text-xl font-mono">{visits['d_' + formatDateToISO(new Date())] || 0}</p></div>
+          </div>
+          {days.map(k => <div key={k} className="flex justify-between text-xs font-mono border-b border-slate-100 pb-1"><span>{formatDateToGB(k.slice(2))}</span><span className="font-bold">{visits[k]}</span></div>)}
         </div>
       </div>
     );
@@ -550,7 +674,7 @@ export default function App() {
             </div>
             <div className="p-4 flex flex-col gap-3">
               <p className="text-[11px] text-slate-600 font-bold bg-blue-50 p-2 rounded border border-blue-100 leading-relaxed">
-                حدد التاريخ والوردية التي تم فيها التغيير. (اكتب الممر القديم عمل كام بليت ليتم خصمها من الإجمالي الحالي وإضافتها لسجل الممر القديم).
+                الممر الجديد: رقم {nextPass || '—'}. حدد التاريخ والوردية التي تم فيها التغيير. (اكتب الممر القديم عمل كام بليت ليتم خصمها من الإجمالي الحالي وإضافتها لسجل الممر القديم).
               </p>
               
               <div className="grid grid-cols-2 gap-2">
@@ -637,6 +761,65 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ----------------- صفحة الدرفيل ----------------- */}
+      {rollView.open && stands[rollView.idx] && (() => {
+        const st = stands[rollView.idx];
+        const pt = st.passTons || {};
+        const order = st.passOrder || [];
+        const upd = (patch) => saveToCloud(stands.map((x, i) => i === rollView.idx ? { ...x, ...patch } : x), null, null, null, null);
+        const closeRoll = () => setRollView({ open: false, idx: null, resetMode: false });
+        const total = Object.values(pt).reduce((a, b) => a + b, 0) + st.accumulatedTons;
+        const pickPass = (p) => {
+          if (rollView.resetMode) { const i = rollView.idx; closeRoll(); openResetModal(i, p); }
+          else if (!st.activePass) upd({ activePass: p, passOrder: [p] });
+        };
+        return (
+          <div className="fixed inset-0 bg-black/70 z-40 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
+              <div className="bg-slate-800 p-3 flex justify-between items-center text-white shrink-0">
+                <h3 className="font-bold text-sm">درفيل ستاند {st.id} — إجمالي {total.toFixed(0)} طن</h3>
+                <button onClick={closeRoll} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-3 overflow-y-auto flex flex-col gap-3 bg-slate-50">
+                {rollView.resetMode && <p className="text-[11px] font-bold text-orange-800 bg-orange-50 border border-orange-200 rounded p-2">اختر رقم الممر الجديد اللي هيشتغل (التصفير هيتم بعد الاختيار).</p>}
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1 text-[10px] font-bold text-slate-700">تاريخ دخول الدرفيل
+                    <input type="date" value={st.entryDate || ''} onChange={e => upd({ entryDate: e.target.value })} className="border border-slate-300 rounded p-1.5 font-mono text-xs" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[10px] font-bold text-slate-700">القطر (مم)
+                    <input type="number" key={st.diameter} defaultValue={st.diameter || ''} onBlur={e => upd({ diameter: e.target.value })} className="border border-slate-300 rounded p-1.5 font-mono text-xs" />
+                  </label>
+                </div>
+                <div className="flex justify-between text-[11px] font-bold bg-white border border-slate-200 rounded p-2">
+                  <span>أول ممر: <span className="text-blue-700">{order[0] || '—'}</span></span>
+                  <span>التاني: <span className="text-blue-700">{order[1] || '—'}</span></span>
+                  {currentUser === 'manager' && <label className="flex items-center gap-1">عدد الممرات
+                    <input type="number" key={st.passCount} defaultValue={st.passCount} onBlur={e => Number(e.target.value) > 0 && upd({ passCount: Number(e.target.value) })} className="w-10 border border-slate-300 rounded text-center font-mono" />
+                  </label>}
+                </div>
+                {!st.activePass && !rollView.resetMode && <p className="text-[10px] font-bold text-slate-500">اضغط على رقم الممر الشغال حالياً لتحديده.</p>}
+                <div className="grid grid-cols-2 gap-2">
+                  {Array.from({ length: st.passCount || 4 }, (_, i) => i + 1).map(p => {
+                    const isActive = st.activePass === p;
+                    const done = !isActive && pt[p] !== undefined;
+                    const cls = isActive ? 'bg-blue-100 border-blue-500 text-blue-800' : done ? 'bg-green-100 border-green-500 text-green-800' : 'bg-white border-slate-300 text-slate-400';
+                    const val = isActive ? st.accumulatedTons : done ? pt[p] : 0;
+                    const clickable = (rollView.resetMode && !isActive) || (!st.activePass && !rollView.resetMode);
+                    return (
+                      <div key={p} onClick={() => clickable && pickPass(p)} className={`border-2 rounded-lg p-2 flex flex-col items-center ${cls} ${clickable ? 'cursor-pointer ring-2 ring-orange-300' : ''}`}>
+                        <span className="text-xs font-black">ممر {p}</span>
+                        <span className="font-mono font-black text-2xl">{val.toFixed(0)}</span>
+                        <span className="text-[9px] font-bold">{isActive ? 'شغال حالياً' : done ? 'اشتغل (طن)' : 'لسه'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* نافذة إعدادات النظام */}
       {isSettingsOpen && (
@@ -753,8 +936,8 @@ export default function App() {
                   <input 
                     type="number" 
                     step="0.01" 
-                    value={billetWeight} 
-                    onChange={(e) => handleWeightChange(e.target.value)} 
+                    key={billetWeight} defaultValue={billetWeight} 
+                    onBlur={(e) => handleWeightChange(e.target.value)} 
                     className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" 
                   />
                 </div>
@@ -837,7 +1020,7 @@ export default function App() {
                     ) : (status.color === 'danger' && <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-500 animate-ping" />)}
                   </div>
                   
-                  <div className="flex flex-col items-center justify-center flex-1 z-10 py-1">
+                  <div onClick={() => setRollView({ open: true, idx, resetMode: false })} className="flex flex-col items-center justify-center flex-1 z-10 py-1 cursor-pointer">
                     <span className={`font-mono font-black text-3xl sm:text-4xl leading-none tracking-tighter ${status.text}`}>{displayTons.toFixed(0)}</span>
                     <span className="text-[10px] sm:text-xs font-bold opacity-75 mt-1 sm:mt-2 text-slate-600">الهدف: {stand.maxLimit} طن</span>
                   </div>
@@ -847,7 +1030,7 @@ export default function App() {
                   ) : (
                     <div className="mt-auto pt-1.5 border-t border-black/10 flex items-center justify-between gap-1 z-10 w-full">
                        <button onClick={() => initiateResetStand(idx)} className="bg-red-500 hover:bg-red-600 text-white text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded font-bold transition-colors shadow-sm shrink-0">ريست</button>
-                       <input type="number" value={stand.maxLimit} onChange={(e) => handleLimitChange(idx, e.target.value)} className="w-12 sm:w-14 text-[10px] sm:text-xs text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500 p-0.5 shadow-inner" />
+                       <input type="number" key={stand.maxLimit} defaultValue={stand.maxLimit} onBlur={(e) => handleLimitChange(idx, e.target.value)} className="w-12 sm:w-14 text-[10px] sm:text-xs text-center border border-slate-300 rounded font-mono font-bold bg-white outline-none focus:border-blue-500 p-0.5 shadow-inner" />
                     </div>
                   )}
                 </div>
