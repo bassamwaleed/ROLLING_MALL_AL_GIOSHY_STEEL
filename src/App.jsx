@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw, 
   Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw, 
@@ -84,7 +84,6 @@ const buildInitialStands = () => {
   }));
 };
 
-// تطبيع بيانات الستاند لضمان توافق أي بيانات قديمة في Firebase مع النظام الجديد
 const normalizeStand = (stand, idx) => {
   const cfg = DEFAULT_STANDS_CONFIG[idx] || DEFAULT_STANDS_CONFIG[0];
   const totalPasses = stand.totalPasses || cfg.totalPasses || 10;
@@ -168,10 +167,35 @@ const convertGBToISO = (gbDate) => {
 export default function App() {
   /* 2. المتغيرات الحية (State) */
   const [currentUser, setCurrentUser] = useState('none'); // 'none' | 'tech' | 'manager' | 'admin'
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false); // يحتفظ بصلاحية الأدمن أثناء التنقل بين وضع الفني والمدير
   const [activeTab, setActiveTab] = useState('dashboard'); 
   const [userAuth, setUserAuth] = useState(null); 
   
   const appId = 'al-gioshy-steel-rolls'; 
+
+  // عداد الضغطات السرية لفتح لوحة الأدمن المخفية (5 ضغطات متتالية)
+  const secretTapCount = useRef(0);
+  const secretTapTimer = useRef(null);
+
+  const handleSecretAdminTrigger = () => {
+    secretTapCount.current += 1;
+    if (secretTapTimer.current) clearTimeout(secretTapTimer.current);
+
+    if (secretTapCount.current >= 5) {
+      secretTapCount.current = 0;
+      if (isSuperAdmin) {
+        // لو هو أصلاً مسجل دخول كأدمن، يوديه للوحة الأدمن فوراً
+        setCurrentUser('admin');
+        setActiveTab('admin');
+      } else {
+        setLoginPrompt({ isOpen: true, role: 'admin', codeInput: '', error: '' });
+      }
+    } else {
+      secretTapTimer.current = setTimeout(() => {
+        secretTapCount.current = 0;
+      }, 1500);
+    }
+  };
 
   const [stands, setStands] = useState(buildInitialStands);
   const [shiftBillets, setShiftBillets] = useState(''); 
@@ -552,7 +576,6 @@ export default function App() {
     setResetDateInput(formatDateToISO(currentProdDate));
     setResetShiftInput(selectedShift);
 
-    // اقتراح أول ممر أبيض (لم يعمل بعد) تلقائياً، أو اختيار ما ضغط عليه المستخدم
     if (preselectedPassNum) {
       setResetTargetPass(preselectedPassNum);
     } else {
@@ -591,11 +614,9 @@ export default function App() {
 
     const selectedDateGB = formatDateToGB(resetDateInput) || new Date().toLocaleDateString('en-GB');
 
-    // حساب ترتيب الممرات (مين الأول ومين الثاني...)
     const currentMaxOrder = Math.max(0, ...st.passes.map(p => p.order || 0));
 
     const updatedPasses = st.passes.map(p => {
-      // قفل الممر القديم بالانتاجية النهائية بتاعته
       if (p.passNumber === previousActivePass && previousActivePass !== targetPass) {
         return {
           ...p,
@@ -604,7 +625,6 @@ export default function App() {
           order: p.order || Math.max(1, currentMaxOrder)
         };
       }
-      // فتح الممر الجديد اللي اختاره الفني/المدير بالافتتاحية الجديدة
       if (p.passNumber === targetPass) {
         const nextOrder = previousActivePass === targetPass 
           ? (p.order || 1) 
@@ -760,7 +780,7 @@ export default function App() {
   };
 
   /* ======================================================
-    6. دوال تسجيل الدخول بالكود ولوحة تحكم الأدمن
+    6. دوال تسجيل الدخول بالكود ولوحة تحكم الأدمن المخفية
     ======================================================
   */
   const openLoginModal = (role) => {
@@ -772,29 +792,53 @@ export default function App() {
     const { role, codeInput } = loginPrompt;
     const cleanCode = codeInput.trim();
 
-    if (role === 'tech' && (cleanCode === adminState.techCode || cleanCode === adminState.adminCode)) {
-      if (adminState.isMaintenance && cleanCode !== adminState.adminCode) {
+    // إذا كتب كود الأدمن في أي شاشة دخول (حتى لو فني أو مدير) يفتح له صلاحية الأدمن الشاملة!
+    if (cleanCode === adminState.adminCode) {
+      setIsSuperAdmin(true);
+      setCurrentUser(role === 'admin' ? 'admin' : role);
+      setActiveTab(role === 'admin' ? 'admin' : 'dashboard');
+      setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
+      return;
+    }
+
+    if (role === 'tech' && cleanCode === adminState.techCode) {
+      if (adminState.isMaintenance) {
         setLoginPrompt(prev => ({ ...prev, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
         return;
       }
+      setIsSuperAdmin(false);
       setCurrentUser('tech');
       setActiveTab('dashboard');
       setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
-    } else if (role === 'manager' && (cleanCode === adminState.managerCode || cleanCode === adminState.adminCode)) {
-      if (adminState.isMaintenance && cleanCode !== adminState.adminCode) {
+    } else if (role === 'manager' && cleanCode === adminState.managerCode) {
+      if (adminState.isMaintenance) {
         setLoginPrompt(prev => ({ ...prev, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
         return;
       }
+      setIsSuperAdmin(false);
       setCurrentUser('manager');
       setActiveTab('dashboard');
-      setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
-    } else if (role === 'admin' && cleanCode === adminState.adminCode) {
-      setCurrentUser('admin');
-      setActiveTab('admin');
       setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
     } else {
       setLoginPrompt(prev => ({ ...prev, error: 'الكود غير صحيح! حاول مرة أخرى.' }));
     }
+  };
+
+  // تبديل وضع العرض للأدمن ليختبر الموقع كفني أو كمدير أو كأدمن بحرية
+  const handleSuperAdminSwitchRole = (targetRole) => {
+    if (!isSuperAdmin) return;
+    setCurrentUser(targetRole);
+    if (targetRole === 'admin') {
+      setActiveTab('admin');
+    } else if (activeTab === 'admin') {
+      setActiveTab('dashboard');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser('none');
+    setIsSuperAdmin(false);
+    setActiveTab('dashboard');
   };
 
   const handleSaveAdminSettings = (updatedAdmin) => {
@@ -833,8 +877,8 @@ export default function App() {
     8. واجهة المستخدم (شاشة الصيانة & شاشة الدخول)
     ======================================================
   */
-  // إذا كان الموقع مقفول للصيانة والمستخدم ليس أدمن
-  if (adminState.isMaintenance && currentUser !== 'admin' && currentUser !== 'none') {
+  // إذا كان الموقع مقفول للصيانة والمستخدم ليس أدمن (الأدمن يتخطى القفل في أي وضع)
+  if (adminState.isMaintenance && !isSuperAdmin && currentUser !== 'none') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4 text-center" dir="rtl">
         <div className="bg-slate-800 p-8 rounded-2xl max-w-md w-full border-2 border-amber-500 shadow-2xl flex flex-col items-center gap-4">
@@ -846,7 +890,7 @@ export default function App() {
             {adminState.maintenanceMessage}
           </p>
           <button 
-            onClick={() => setCurrentUser('none')} 
+            onClick={handleLogout} 
             className="mt-4 bg-slate-700 hover:bg-slate-600 text-white font-bold px-6 py-2.5 rounded-lg text-xs transition-colors"
           >
             العودة لشاشة الدخول
@@ -858,7 +902,7 @@ export default function App() {
 
   if (currentUser === 'none') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4" dir="rtl">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4 select-none" dir="rtl">
         
         {/* نافذة إدخال الكود السري */}
         {loginPrompt.isOpen && (
@@ -869,7 +913,7 @@ export default function App() {
                   <Key className="w-4 h-4 text-blue-400" />
                   {loginPrompt.role === 'tech' && 'كود دخول فني الإنتاج'}
                   {loginPrompt.role === 'manager' && 'كود دخول إدارة المصنع'}
-                  {loginPrompt.role === 'admin' && 'كود مسؤول النظام (Admin)'}
+                  {loginPrompt.role === 'admin' && 'بوابة مسؤول النظام (Admin)'}
                 </h3>
                 <button type="button" onClick={() => setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' })} className="text-slate-400 hover:text-white">
                   <X className="w-4 h-4" />
@@ -900,15 +944,20 @@ export default function App() {
 
         <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           
-          {customLogo ? (
-            <div className="w-full flex justify-center mb-6 bg-white p-2 rounded-lg shadow-sm">
-              <img src={customLogo} alt="Factory Logo" className="h-16 object-contain drop-shadow-md" />
-            </div>
-          ) : (
-            <Settings2 className="w-16 h-16 mx-auto text-blue-500 mb-4" />
-          )}
+          {/* منطقة اللوجو أو الأيقونة: اضغط هنا 5 مرات متتالية لفتح لوحة الأدمن المخفية */}
+          <div onClick={handleSecretAdminTrigger} className="cursor-pointer inline-block w-full">
+            {customLogo ? (
+              <div className="w-full flex justify-center mb-6 bg-white p-2 rounded-lg shadow-sm">
+                <img src={customLogo} alt="Factory Logo" className="h-16 object-contain drop-shadow-md" />
+              </div>
+            ) : (
+              <Settings2 className="w-16 h-16 mx-auto text-blue-500 mb-4 active:scale-95 transition-transform" />
+            )}
+          </div>
           
-          <h1 className="text-2xl font-black mb-1 text-slate-100">تتبع درافيل وممرات الإنتاج</h1>
+          <h1 onClick={handleSecretAdminTrigger} className="text-2xl font-black mb-1 text-slate-100 cursor-pointer">
+            تتبع درافيل وممرات الإنتاج
+          </h1>
           <p className="text-xs text-slate-400 mb-3 font-bold">شركة الجيوشي للصلب - ALGIOSHY STEEL</p>
           
           {adminState.isMaintenance ? (
@@ -940,12 +989,7 @@ export default function App() {
               >
                 <TrendingUp className="w-5 h-5" /> دخول إدارة المصنع
               </button>
-              <button 
-                onClick={() => openLoginModal('admin')} 
-                className="w-full flex items-center justify-center gap-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 p-2.5 rounded-lg font-bold text-xs transition-colors mt-2"
-              >
-                <ShieldAlert className="w-4 h-4" /> لوحة تحكم الأدمن (Admin)
-              </button>
+              {/* تم إخفاء زر الأدمن تماماً - يظهر فقط عند الضغط 5 مرات على اللوجو أو العنوان */}
             </div>
           )}
         </div>
@@ -956,7 +1000,6 @@ export default function App() {
   const isResetDateFriday = resetDateInput ? new Date(resetDateInput).getDay() === 5 : false;
   const resetModalShifts = isResetDateFriday ? ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'] : ['الوردية الأولى', 'الوردية الثانية', 'الوردية الثالثة'];
 
-  // بيانات الستاند المفتوح حالياً في صفحة الدرفيل
   const selectedRollStand = rollModal.standIndex !== null ? stands[rollModal.standIndex] : null;
   const resetStandObj = resetModal.standIndex !== null ? stands[resetModal.standIndex] : null;
 
@@ -981,6 +1024,42 @@ export default function App() {
               <button onClick={() => { if(modal.onConfirm) modal.onConfirm(); closeBox(); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs shadow transition-colors">موافق</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ----------------- نافذة الكود السري إذا تم تفعيلها بـ 5 ضغطات من داخل النظام ----------------- */}
+      {loginPrompt.isOpen && (
+        <div className="fixed inset-0 bg-black/75 z-[90] flex items-center justify-center p-4 backdrop-blur-sm">
+          <form onSubmit={handleVerifyAccessCode} className="bg-slate-800 border border-slate-600 rounded-xl max-w-xs w-full p-5 shadow-2xl flex flex-col gap-3 text-white">
+            <div className="flex justify-between items-center border-b border-slate-700 pb-2">
+              <h3 className="font-bold text-sm flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                بوابة مسؤول النظام (Admin)
+              </h3>
+              <button type="button" onClick={() => setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' })} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <input
+              type="password"
+              autoFocus
+              value={loginPrompt.codeInput}
+              onChange={(e) => setLoginPrompt(prev => ({ ...prev, codeInput: e.target.value, error: '' }))}
+              placeholder="أدخل كود الأدمن..."
+              className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2.5 text-center font-mono text-lg tracking-widest text-white focus:border-amber-500 outline-none"
+            />
+
+            {loginPrompt.error && (
+              <p className="text-red-400 text-xs font-bold text-center bg-red-950/50 border border-red-800 p-1.5 rounded">
+                {loginPrompt.error}
+              </p>
+            )}
+
+            <button type="submit" className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-2.5 rounded-lg transition-colors shadow-lg text-sm">
+              تفعيل وضع الأدمن الشامل
+            </button>
+          </form>
         </div>
       )}
 
@@ -1152,10 +1231,10 @@ export default function App() {
                     ممر لم يعمل بعد (متصفر 0 - أبيض)
                   </span>
                 </div>
-                <span className="text-slate-500 text-[10px]">* اضغط على أي ممر أبيض للانتقال والتصفير عليه مباشرة</span>
+                <span className="text-slate-500 text-[10px]">* اضغط على أي ممر للانتقال والتصفير عليه مباشرة</span>
               </div>
 
-              {/* شبكة الممرات (بنفس روح جدول التقرير اليومي) */}
+              {/* شبكة الممرات */}
               <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 gap-2">
                 {selectedRollStand.passes.map((passObj) => {
                   const isCurrent = passObj.status === 'active' || passObj.passNumber === selectedRollStand.activePass;
@@ -1177,19 +1256,17 @@ export default function App() {
                             : 'bg-white text-slate-700 border-slate-300 hover:border-blue-400'
                       }`}
                     >
-                      {/* الهيدر العلوي للممر: رقم الممر وترتيب تشغيله */}
                       <div className="flex justify-between items-center border-b border-current/10 pb-1">
                         <span className="font-mono font-black text-xs">
                           ممر {passObj.passNumber}
                         </span>
                         {passObj.order && (
-                          <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded shadow-sm" title={`ترتيب التشغيل: رقم ${passObj.order}`}>
+                          <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded shadow-sm">
                             ترتيب {passObj.order}
                           </span>
                         )}
                       </div>
 
-                      {/* المنتصف: الإنتاجية */}
                       <div className="my-2 text-center">
                         <span className={`font-mono font-black text-xl block leading-none ${
                           isCurrent ? 'text-amber-400' : isUsed ? 'text-blue-900' : 'text-slate-400'
@@ -1199,7 +1276,6 @@ export default function App() {
                         <span className="text-[9px] font-bold opacity-75">طن</span>
                       </div>
 
-                      {/* الفوتر: الحالة */}
                       <div className="text-center">
                         {isCurrent ? (
                           <span className="inline-block w-full bg-amber-400 text-slate-950 text-[9px] font-black py-0.5 rounded">
@@ -1216,8 +1292,7 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* أزرار تحكم سريع للمدير أو الأدمن لتصحيح ممر قديم */}
-                      {(currentUser === 'manager' || currentUser === 'admin') && !isCurrent && (
+                      {(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin) && !isCurrent && (
                         <div className="mt-1.5 pt-1 border-t border-slate-300/60 flex justify-between gap-1" onClick={e => e.stopPropagation()}>
                           <button 
                             onClick={() => {
@@ -1428,11 +1503,51 @@ export default function App() {
         </div>
       )}
 
+      {/* ----------------- شريط التبديل الحر للأدمن (يظهر فقط عند الدخول كأدمن) ----------------- */}
+      {isSuperAdmin && (
+        <div className="bg-amber-500 text-slate-950 px-3 py-1 rounded flex flex-wrap justify-between items-center gap-2 shadow-sm flex-none">
+          <div className="flex items-center gap-1.5 text-xs font-black">
+            <ShieldAlert className="w-4 h-4" />
+            <span>وضع الأدمن الشامل (اختبار الصلاحيات بحرية):</span>
+            {adminState.isMaintenance && (
+              <span className="bg-red-700 text-white text-[9px] px-1.5 py-0.5 rounded">الموقع مغلق للزوار</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => handleSuperAdminSwitchRole('tech')}
+              className={`px-2.5 py-1 rounded text-[10px] font-black transition-all flex items-center gap-1 ${
+                currentUser === 'tech' ? 'bg-slate-900 text-amber-400 shadow' : 'bg-amber-400/60 hover:bg-amber-400 text-slate-900'
+              }`}
+            >
+              <Edit3 className="w-3 h-3" /> عرض كـ فني
+            </button>
+            <button
+              onClick={() => handleSuperAdminSwitchRole('manager')}
+              className={`px-2.5 py-1 rounded text-[10px] font-black transition-all flex items-center gap-1 ${
+                currentUser === 'manager' ? 'bg-slate-900 text-amber-400 shadow' : 'bg-amber-400/60 hover:bg-amber-400 text-slate-900'
+              }`}
+            >
+              <UserCog className="w-3 h-3" /> عرض كـ مدير
+            </button>
+            <button
+              onClick={() => handleSuperAdminSwitchRole('admin')}
+              className={`px-2.5 py-1 rounded text-[10px] font-black transition-all flex items-center gap-1 ${
+                currentUser === 'admin' && activeTab === 'admin' ? 'bg-slate-900 text-amber-400 shadow' : 'bg-amber-400/60 hover:bg-amber-400 text-slate-900'
+              }`}
+            >
+              <Settings2 className="w-3 h-3" /> إعدادات الأدمن
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* الشريط العلوي */}
-      <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm">
+      <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm select-none">
         <div className="flex justify-between items-center relative h-10">
           
-          <div className="flex items-center gap-2 z-10">
+          {/* الضغط 5 مرات هنا أيضاً يفتح بوابة الأدمن السرية في أي وقت */}
+          <div onClick={handleSecretAdminTrigger} className="flex items-center gap-2 z-10 cursor-pointer">
             {customLogo && (
               <div className="bg-white p-1 rounded shadow-sm flex shrink-0">
                  <img src={customLogo} alt="Logo" className="h-5 sm:h-7 w-auto max-w-[70px] sm:max-w-[120px] object-contain" />
@@ -1446,7 +1561,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 z-10">
-            {(currentUser === 'manager' || currentUser === 'admin') && (
+            {(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin) && (
                <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 transition-colors shadow-sm" title="رفع شعار المصنع">
                  <Settings className="w-3.5 h-3.5 text-blue-300" />
                </button>
@@ -1455,7 +1570,7 @@ export default function App() {
               <span className={`w-2 h-2 rounded-full ${auth ? 'bg-green-500 shadow-[0_0_5px_#22c55e]' : 'bg-slate-400'}`}></span> 
               {currentUser === 'tech' ? 'فني' : currentUser === 'manager' ? 'مدير' : 'أدمن'}
             </span>
-            <button onClick={() => {setCurrentUser('none'); setActiveTab('dashboard');}} className="text-red-400 hover:text-red-300 text-xs font-bold transition-colors">خروج</button>
+            <button onClick={handleLogout} className="text-red-400 hover:text-red-300 text-xs font-bold transition-colors">خروج</button>
           </div>
         </div>
 
@@ -1464,8 +1579,8 @@ export default function App() {
              <button onClick={() => setActiveTab('dashboard')} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><TrendingUp className="w-3 h-3" /> التشغيل والممرات</button>
              <button onClick={() => setActiveTab('analytics')} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'analytics' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><BarChart3 className="w-3 h-3" /> الإحصائيات</button>
              <button onClick={() => setActiveTab('archive')} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'archive' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><Archive className="w-3 h-3" /> الأرشيف</button>
-             {currentUser === 'admin' && (
-               <button onClick={() => setActiveTab('admin')} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 shadow' : 'text-amber-400 hover:bg-slate-700'}`}><ShieldAlert className="w-3.5 h-3.5" /> لوحة الأدمن</button>
+             {isSuperAdmin && (
+               <button onClick={() => { setCurrentUser('admin'); setActiveTab('admin'); }} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 shadow' : 'text-amber-400 hover:bg-slate-700'}`}><ShieldAlert className="w-3.5 h-3.5" /> لوحة الأدمن</button>
              )}
           </div>
 
@@ -1489,15 +1604,29 @@ export default function App() {
       </nav>
 
       {/* ----------------- تبويب لوحة تحكم الأدمن (Admin Panel) ----------------- */}
-      {activeTab === 'admin' && currentUser === 'admin' && (
+      {activeTab === 'admin' && isSuperAdmin && (
         <div className="flex-1 bg-white rounded-lg shadow border border-slate-300 p-4 overflow-y-auto flex flex-col gap-4">
-          <div className="flex items-center justify-between border-b pb-3">
+          <div className="flex flex-wrap items-center justify-between border-b pb-3 gap-2">
             <div className="flex items-center gap-2">
               <ShieldAlert className="w-6 h-6 text-amber-500" />
               <div>
-                <h2 className="font-black text-base text-slate-800">لوحة تحكم المسؤول (Admin Panel)</h2>
-                <p className="text-xs text-slate-500 font-bold">إدارة حالة الموقع، أكواد الدخول للمدير والأفراد، وإحصائيات الزيارات</p>
+                <h2 className="font-black text-base text-slate-800">لوحة تحكم المسؤول السرية (Admin Panel)</h2>
+                <p className="text-xs text-slate-500 font-bold">إدارة حالة الموقع، أكواد الدخول، والتنقل السريع لاختبار النظام</p>
               </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setCurrentUser('tech'); setActiveTab('dashboard'); }}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"
+              >
+                <Edit3 className="w-3.5 h-3.5" /> اختبار الموقع كـ فني
+              </button>
+              <button
+                onClick={() => { setCurrentUser('manager'); setActiveTab('dashboard'); }}
+                className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"
+              >
+                <UserCog className="w-3.5 h-3.5" /> اختبار الموقع كـ مدير
+              </button>
             </div>
           </div>
 
@@ -1534,13 +1663,13 @@ export default function App() {
 
           {/* قفل الموقع للصيانة والتعديل */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center flex-wrap gap-2">
               <div>
                 <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
                   <Wrench className="w-4 h-4 text-amber-600" />
-                  وضع الصيانة والتحديث (قفل الموقع مؤقتاً)
+                  وضع الصيانة والتحديث (قفل الموقع مؤقتاً عن الفنيين والمدير)
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">عند التفعيل، يظهر للفنيين والمديرين رسالة "جاري التعديل أو التحديث" ولا يمكنهم الدخول.</p>
+                <p className="text-xs text-slate-500 mt-0.5">عند التفعيل، يظهر للمستخدمين رسالة "جاري التعديل أو التحديث"، بينما يمكنك أنت كأدمن تصفح واختبار الموقع بالكامل.</p>
               </div>
               <button
                 onClick={() => handleSaveAdminSettings({ ...adminState, isMaintenance: !adminState.isMaintenance })}
@@ -1594,7 +1723,7 @@ export default function App() {
               </div>
 
               <div className="bg-white p-3 rounded-lg border border-slate-200">
-                <label className="text-xs font-bold text-amber-700 block mb-1">كود الأدمن الرئيسي (Admin):</label>
+                <label className="text-xs font-bold text-amber-700 block mb-1">كود الأدمن السري (Admin):</label>
                 <input
                   type="text"
                   value={adminState.adminCode}
@@ -1620,7 +1749,7 @@ export default function App() {
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-2 flex-1 overflow-hidden p-1">
           
-          {/* لوحة تحكم المدير أو الأدمن */}
+          {/* لوحة تحكم المدير (تظهر في وضع المدير أو وضع الأدمن) */}
           {(currentUser === 'manager' || currentUser === 'admin') && (
             <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded-lg border border-slate-300 shadow-sm">
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -1652,8 +1781,8 @@ export default function App() {
             </div>
           )}
 
-          {/* لوحة تسجيل الفني */}
-          {currentUser === 'tech' && (
+          {/* لوحة تسجيل الفني (تظهر في وضع الفني أو وضع الأدمن) */}
+          {(currentUser === 'tech' || currentUser === 'admin') && (
             <div className="bg-white p-2 rounded-lg shadow-sm flex flex-col flex-none border border-slate-300 gap-2">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1.5 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-3 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900 transition-colors">يوم سابق</button>
@@ -1730,7 +1859,7 @@ export default function App() {
                       <button onClick={() => setHistoryModal({ isOpen: true, standId: stand.id })} className="p-1 text-blue-600 bg-blue-100 hover:bg-blue-200 rounded transition-colors" title="سجل الممر">
                         <History className="w-3.5 h-3.5" />
                       </button>
-                      {currentUser === 'tech' ? (
+                      {(currentUser === 'tech' || currentUser === 'admin') ? (
                         <button onClick={(e) => handleToggleActive(idx, e)} className={`p-1 rounded transition-colors ${stand.isActive ? 'text-green-600 bg-white/80 hover:bg-white' : 'text-slate-500 bg-black/10'}`}><Power className="w-3.5 h-3.5" /></button>
                       ) : (status.color === 'danger' && <AlertTriangle className="w-4 h-4 text-red-500 animate-ping" />)}
                     </div>
