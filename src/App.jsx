@@ -4,7 +4,8 @@ import {
   Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw,
   Sliders, Trash2, Clock, Settings, X, UploadCloud, History,
   ShieldAlert, Key, Eye, Layers, Wrench, ArrowLeftRight,
-  FileSpreadsheet, FileText, Inbox, Check, XCircle, Hourglass
+  FileSpreadsheet, FileText, Inbox, Check, XCircle, Hourglass,
+  ChevronDown, ChevronUp, Plus
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
@@ -35,7 +36,7 @@ try {
   console.error("Firebase init error:", error);
 }
 
-/* 12 ستاند مرتبين: ستاند 1 .. ستاند 12 */
+/* 12 ستاند أساسي: ستاند 1 .. ستاند 12 (مع دعم إضافة ستاندات جديدة بواسطة المدير) */
 const DEFAULT_STANDS_CONFIG = [
   { type: 'بيضاوي', rollCode: '111', diameter: '380', hardness: '42 HRC', totalPasses: 6, maxLimit: 2500 },
   { type: 'مربع', rollCode: '207', diameter: '374', hardness: '45 HRC', totalPasses: 9, maxLimit: 2500 },
@@ -68,7 +69,7 @@ const createPassesArray = (count, activePassNum = 1, initialTons = 0) =>
     const isCurrent = pNum === activePassNum;
     return {
       passNumber: pNum,
-      status: isCurrent ? 'active' : 'unused', // 'unused' | 'active' | 'used'
+      status: isCurrent ? 'active' : 'unused',
       tons: isCurrent ? initialTons : 0,
       order: isCurrent ? 1 : null,
       sizeLabel: ''
@@ -78,20 +79,29 @@ const createPassesArray = (count, activePassNum = 1, initialTons = 0) =>
 const buildStand = (cfg) => {
   const todayGB = new Date().toLocaleDateString('en-GB');
   return {
-    id: cfg.id, name: cfg.name, type: cfg.type, rollCode: cfg.rollCode,
-    diameter: cfg.diameter, hardness: cfg.hardness, entryDate: todayGB,
-    totalPasses: cfg.totalPasses, activePass: 1,
-    passes: createPassesArray(cfg.totalPasses, 1, 0),
-    isActive: true, accumulatedTons: 0, maxLimit: cfg.maxLimit, lastResetDate: todayGB,
+    id: String(cfg.id),
+    name: cfg.name || `ستاند ${cfg.id}`,
+    type: cfg.type || '',
+    rollCode: cfg.rollCode || '',
+    diameter: cfg.diameter || '',
+    hardness: cfg.hardness || '',
+    entryDate: todayGB,
+    totalPasses: Number(cfg.totalPasses) || 10,
+    activePass: 1,
+    passes: createPassesArray(Number(cfg.totalPasses) || 10, 1, 0),
+    isActive: true,
+    accumulatedTons: 0,
+    maxLimit: Number(cfg.maxLimit) || 1000,
+    lastResetDate: todayGB,
     preCountedShifts: {}
   };
 };
 const buildInitialStands = () => DEFAULT_STANDS_CONFIG.map(buildStand);
 
-const normalizeStand = (stand, cfg) => {
-  const totalPasses = stand.totalPasses || cfg.totalPasses || 10;
-  const activePass = stand.activePass || 1;
-  const currentTons = stand.accumulatedTons || 0;
+const normalizeStand = (stand, fallbackCfg = {}) => {
+  const totalPasses = Number(stand.totalPasses) || Number(fallbackCfg.totalPasses) || 10;
+  const activePass = Number(stand.activePass) || 1;
+  const currentTons = Number(stand.accumulatedTons) || 0;
   let passes = stand.passes;
   if (!Array.isArray(passes) || passes.length !== totalPasses) {
     passes = createPassesArray(totalPasses, activePass, currentTons);
@@ -99,26 +109,46 @@ const normalizeStand = (stand, cfg) => {
     passes = passes.map(p => p.passNumber === activePass
       ? { ...p, status: 'active', tons: currentTons, order: p.order || 1 } : p);
   }
+  const idStr = String(stand.id ?? fallbackCfg.id ?? '1');
   return {
     ...stand,
-    id: cfg.id,
-    name: cfg.name,
-    type: stand.type ?? cfg.type,
-    rollCode: stand.rollCode ?? cfg.rollCode,
-    diameter: stand.diameter ?? cfg.diameter,
-    hardness: stand.hardness ?? cfg.hardness,
+    id: idStr,
+    name: stand.name || fallbackCfg.name || `ستاند ${idStr}`,
+    type: stand.type ?? fallbackCfg.type ?? '',
+    rollCode: stand.rollCode ?? fallbackCfg.rollCode ?? '',
+    diameter: stand.diameter ?? fallbackCfg.diameter ?? '',
+    hardness: stand.hardness ?? fallbackCfg.hardness ?? '',
     entryDate: stand.entryDate || stand.lastResetDate || new Date().toLocaleDateString('en-GB'),
-    maxLimit: stand.maxLimit || cfg.maxLimit,
-    totalPasses, activePass, passes,
+    maxLimit: Number(stand.maxLimit) || Number(fallbackCfg.maxLimit) || 1000,
+    totalPasses,
+    activePass,
+    passes,
     preCountedShifts: stand.preCountedShifts || {}
   };
 };
 
-const normalizeList = (raw) =>
-  DEFAULT_STANDS_CONFIG.map(cfg => {
-    const found = (raw || []).find(s => String(s.id) === cfg.id);
-    return found ? normalizeStand(found, cfg) : buildStand(cfg);
+// يدعم الـ 12 ستاند الأساسية + أي ستاندات جديدة يضيفها المدير
+const normalizeList = (raw) => {
+  if (!Array.isArray(raw) || raw.length === 0) return buildInitialStands();
+  const filtered = raw.filter(s => s && String(s.id) !== 'R.St');
+  if (filtered.length === 0) return buildInitialStands();
+
+  const normalized = filtered.map((s, idx) => {
+    const cfg = DEFAULT_STANDS_CONFIG.find(c => c.id === String(s.id)) || DEFAULT_STANDS_CONFIG[idx] || {};
+    return normalizeStand(s, cfg);
   });
+
+  // إذا كانت القائمة قديمة (أقل من 12) نكملها للـ 12 الأساسية
+  if (normalized.length < 12) {
+    DEFAULT_STANDS_CONFIG.forEach(cfg => {
+      if (!normalized.some(s => String(s.id) === cfg.id)) {
+        normalized.push(buildStand(cfg));
+      }
+    });
+  }
+
+  return normalized.sort((a, b) => (Number(a.id) || 999) - (Number(b.id) || 999));
+};
 
 const LiveClock = () => {
   const [time, setTime] = useState(new Date());
@@ -127,13 +157,13 @@ const LiveClock = () => {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="flex bg-slate-800 border border-slate-700 rounded px-2 py-0.5 items-center gap-1.5 shadow-inner">
-      <Clock className="w-3 h-3 text-blue-400" />
-      <div className="flex flex-col items-center leading-none mt-0.5">
-        <span className="text-[10px] font-mono font-bold text-slate-100" dir="ltr">
+    <div className="flex bg-slate-800 border border-slate-700 rounded-lg px-2 py-0.5 items-center gap-1.5 shadow-inner shrink-0">
+      <Clock className="w-3 h-3 text-blue-400 shrink-0" />
+      <div className="flex flex-col items-center leading-none">
+        <span className="text-[10px] font-mono font-bold text-slate-100 whitespace-nowrap" dir="ltr">
           {time.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </span>
-        <span className="text-[7px] text-slate-400 mt-0.5">
+        <span className="text-[7px] text-slate-400 mt-0.5 whitespace-nowrap">
           {time.toLocaleDateString('ar-EG', { weekday: 'short', day: 'numeric', month: 'short' })}
         </span>
       </div>
@@ -372,7 +402,7 @@ const applyPassChange = (list, req, billetWeight, approver, archive) => {
 };
 
 const Overlay = ({ z = 50, children }) => (
-  <div className={`fixed inset-0 bg-black/70 flex items-center justify-center p-3 backdrop-blur-sm`} style={{ zIndex: z }}>{children}</div>
+  <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-3 backdrop-blur-sm" style={{ zIndex: z }}>{children}</div>
 );
 
 /* ======================================================
@@ -386,14 +416,18 @@ export default function App() {
   const [userAuth, setUserAuth] = useState(null);
   const appId = 'al-gioshy-steel-rolls';
 
-  // المدير والمهندس والأدمن يملكون صلاحية الاعتماد المباشر، بينما المدير والأدمن يملكون إدارة النظام والأكواد
+  // الصلاحيات
   const isManagerLike = currentUser === 'manager' || currentUser === 'admin' || currentUser === 'engineer';
   const canManageUsers = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
+  const canAddStand = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
   const canRecordShift = currentUser === 'tech' || currentUser === 'engineer' || currentUser === 'admin';
 
   const roleLabel = loggedUserInfo.name
     ? `${loggedUserInfo.roleTitle}: ${loggedUserInfo.name}`
     : (ROLE_TITLES[currentUser] || 'مستخدم');
+
+  // حالة فتح/طي شريط أدوات المدير والتقارير لتوفير مساحة الشاشة
+  const [isManagerToolbarOpen, setIsManagerToolbarOpen] = useState(false);
 
   const secretTapCount = useRef(0);
   const secretTapTimer = useRef(null);
@@ -414,7 +448,7 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]);
   const [passChanges, setPassChanges] = useState([]);
   const [pendingList, setPendingList] = useState([]);
-  const [staffAccounts, setStaffAccounts] = useState([]); // قائمة أكواد الفنيين والمهندسين والمديرين بأسمائهم
+  const [staffAccounts, setStaffAccounts] = useState([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [billetWeight, setBilletWeight] = useState(0.75);
@@ -427,6 +461,12 @@ export default function App() {
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [newStaffForm, setNewStaffForm] = useState({ name: '', code: '', role: 'tech' });
 
+  // نافذة إضافة ستاند جديد (للمدير فقط)
+  const [addStandModalOpen, setAddStandModalOpen] = useState(false);
+  const [newStandForm, setNewStandForm] = useState({
+    name: '', type: 'بيضاوي', diameter: '320', hardness: '50 HRC', rollCode: '', totalPasses: 20, maxLimit: 1000
+  });
+
   const [adminState, setAdminState] = useState({
     isMaintenance: false,
     maintenanceMessage: 'الموقع مغلق حالياً لإجراء تحديثات وصيانة للنظام.. يرجى المحاولة لاحقاً.',
@@ -438,7 +478,6 @@ export default function App() {
   const [rollModal, setRollModal] = useState({ isOpen: false, standIndex: null, isEditingInfo: false });
   const [rollEditForm, setRollEditForm] = useState({ rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6 });
 
-  // نافذة إدخال بيانات الدرفيل الجديد عند تغييره
   const [newRollModal, setNewRollModal] = useState({ isOpen: false, standIndex: null });
   const [newRollForm, setNewRollForm] = useState({
     rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6, notes: ''
@@ -586,6 +625,58 @@ export default function App() {
     }
   };
 
+  /* ---------- إضافة وحذف ستاندات جديدة (للمدير فقط) ---------- */
+  const openAddStandModal = () => {
+    const maxId = Math.max(0, ...stands.map(s => Number(s.id) || 0));
+    const nextNum = maxId + 1;
+    setNewStandForm({
+      name: `ستاند ${nextNum}`,
+      type: 'بيضاوي',
+      diameter: '320',
+      hardness: '50 HRC',
+      rollCode: '',
+      totalPasses: 20,
+      maxLimit: 1000
+    });
+    setAddStandModalOpen(true);
+  };
+
+  const handleCreateNewStand = (e) => {
+    e.preventDefault();
+    if (!canAddStand) return;
+    const maxId = Math.max(0, ...stands.map(s => Number(s.id) || 0));
+    const nextId = String(maxId + 1);
+    const createdStand = buildStand({
+      id: nextId,
+      name: newStandForm.name.trim() || `ستاند ${nextId}`,
+      type: newStandForm.type.trim(),
+      diameter: newStandForm.diameter.trim(),
+      hardness: newStandForm.hardness.trim(),
+      rollCode: newStandForm.rollCode.trim(),
+      totalPasses: Math.max(1, Math.min(40, Number(newStandForm.totalPasses) || 10)),
+      maxLimit: Math.max(100, Number(newStandForm.maxLimit) || 1000)
+    });
+    const updatedStands = [...stands, createdStand];
+    save({ stands: updatedStands });
+    setAddStandModalOpen(false);
+    showAlert('تمت الإضافة', `تم إضافة (${createdStand.name}) بنجاح إلى شبكة التشغيل.`);
+  };
+
+  const handleDeleteStand = (standIndex) => {
+    if (!canAddStand) return;
+    const st = stands[standIndex];
+    if (!st) return;
+    if (stands.length <= 1) {
+      showAlert('تنبيه', 'لا يمكن حذف جميع الستاندات.');
+      return;
+    }
+    showConfirm('حذف ستاند', `هل أنت متأكد من حذف (${st.name}) نهائياً من قائمة الستاندات؟`, () => {
+      const updated = stands.filter((_, i) => i !== standIndex);
+      save({ stands: updated });
+      setRollModal({ isOpen: false, standIndex: null, isEditingInfo: false });
+    });
+  };
+
   /* ---------- إدارة أكواد الأفراد والمهندسين (للمدير) ---------- */
   const handleAddStaffMember = (e) => {
     e.preventDefault();
@@ -605,7 +696,7 @@ export default function App() {
       id: Date.now(),
       name: cleanName,
       code: cleanCode,
-      role: newStaffForm.role, // 'tech' | 'engineer' | 'manager'
+      role: newStaffForm.role,
       roleTitle: ROLE_TITLES[newStaffForm.role] || 'فني',
       createdAt: new Date().toLocaleDateString('en-GB'),
       createdBy: roleLabel
@@ -699,7 +790,6 @@ export default function App() {
     date: new Date().toLocaleDateString('en-GB'), shift: selectedShift, ...extra
   });
 
-  // الفني يرسل طلب / المدير أو المهندس ينفذ مباشرة
   const submitChange = (req) => {
     if (isManagerLike) {
       const r = applyPassChange(stands, req, billetWeight, roleLabel, productionArchive);
@@ -711,7 +801,6 @@ export default function App() {
     showAlert('تم إرسال الطلب', `تم إرسال الطلب باسم (${roleLabel}) للمدير. هيتنفذ بعد موافقته، وتقدر تتابع حالته من كارت الستاند.`);
   };
 
-  // فتح نافذة إدخال بيانات الدرفيل الجديد
   const handleInstallNewRoll = () => {
     const idx = rollModal.standIndex;
     if (idx === null) return;
@@ -931,7 +1020,6 @@ export default function App() {
     const { role, codeInput } = loginPrompt;
     const code = codeInput.trim();
 
-    // 1. كود الأدمن السري يفتح من أي بوابة
     if (code === adminState.adminCode) {
       setIsSuperAdmin(true);
       setLoggedUserInfo({ name: 'مسؤول النظام', roleTitle: 'أدمن', code });
@@ -941,14 +1029,12 @@ export default function App() {
       return;
     }
 
-    // 2. البحث في أكواد الأفراد والمهندسين والمديرين المسجلين بواسطة المدير
     const matchedStaff = staffAccounts.find(u => u.code === code);
     if (matchedStaff) {
       if (adminState.isMaintenance) {
         setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
         return;
       }
-      // التحقق من توافق البوابة أو السماح بالدخول المباشر حسب صلاحية الكود
       if (role === 'manager' && matchedStaff.role === 'tech') {
         setLoginPrompt(p => ({ ...p, error: 'هذا الكود خاص بفني إنتاج وليس للإدارة!' }));
         return;
@@ -965,7 +1051,6 @@ export default function App() {
       return;
     }
 
-    // 3. الأكواد العامة الافتراضية
     const ok = (role === 'tech' && code === adminState.techCode) || (role === 'manager' && code === adminState.managerCode);
     if (!ok) {
       setLoginPrompt(p => ({ ...p, error: 'الكود غير صحيح! تأكد من الكود الخاص بك.' }));
@@ -1124,6 +1209,10 @@ export default function App() {
       )
     : null;
 
+  const greenCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length;
+  const warnCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length;
+  const dangerCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length;
+
   /* ======================================================
     الواجهة الرئيسية
     ====================================================== */
@@ -1150,6 +1239,94 @@ export default function App() {
       )}
 
       {loginModalJSX}
+
+      {/* ===== نافذة إضافة ستاند جديد (للمدير فقط) ===== */}
+      {addStandModalOpen && canAddStand && (
+        <Overlay z={85}>
+          <form onSubmit={handleCreateNewStand} className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300 flex flex-col">
+            <div className="bg-slate-900 p-3.5 flex justify-between items-center text-white">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-400" />
+                إضافة ستاند جديد للمصنع
+              </h3>
+              <button type="button" onClick={() => setAddStandModalOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">اسم الستاند:</label>
+                  <input
+                    type="text"
+                    required
+                    value={newStandForm.name}
+                    onChange={e => setNewStandForm({ ...newStandForm, name: e.target.value })}
+                    placeholder="مثال: ستاند 13"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">شكل الممر:</label>
+                  <input
+                    type="text"
+                    value={newStandForm.type}
+                    onChange={e => setNewStandForm({ ...newStandForm, type: e.target.value })}
+                    placeholder="بيضاوي / مربع / مشرشر"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">قطر الدرفيل (مم):</label>
+                  <input
+                    type="text"
+                    value={newStandForm.diameter}
+                    onChange={e => setNewStandForm({ ...newStandForm, diameter: e.target.value })}
+                    placeholder="مثال: 320"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">عدد الممرات:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="40"
+                    required
+                    value={newStandForm.totalPasses}
+                    onChange={e => setNewStandForm({ ...newStandForm, totalPasses: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الصلابة (Hardness):</label>
+                  <input
+                    type="text"
+                    value={newStandForm.hardness}
+                    onChange={e => setNewStandForm({ ...newStandForm, hardness: e.target.value })}
+                    placeholder="مثال: 50 HRC"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الحد الأقصى للممر (طن):</label>
+                  <input
+                    type="number"
+                    min="100"
+                    required
+                    value={newStandForm.maxLimit}
+                    onChange={e => setNewStandForm({ ...newStandForm, maxLimit: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs shadow mt-1">
+                تأكيد إضافة الستاند
+              </button>
+            </div>
+          </form>
+        </Overlay>
+      )}
 
       {/* ===== نافذة إدارة أكواد الفنيين والمهندسين (للمدير والأدمن) ===== */}
       {staffModalOpen && canManageUsers && (
@@ -1459,11 +1636,18 @@ export default function App() {
                       <History className="w-3.5 h-3.5" /> السجل
                     </button>
                   </div>
-                  {isManagerLike && (
-                    <button onClick={() => setRollModal(prev => ({ ...prev, isEditingInfo: !prev.isEditingInfo }))} className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 border border-slate-300">
-                      <Edit3 className="w-3.5 h-3.5 text-blue-600" /> {rollModal.isEditingInfo ? 'إخفاء التعديل' : 'تعديل بيانات الدرفيل الحالي'}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {isManagerLike && (
+                      <button onClick={() => setRollModal(prev => ({ ...prev, isEditingInfo: !prev.isEditingInfo }))} className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 border border-slate-300">
+                        <Edit3 className="w-3.5 h-3.5 text-blue-600" /> {rollModal.isEditingInfo ? 'إخفاء التعديل' : 'تعديل بيانات الدرفيل'}
+                      </button>
+                    )}
+                    {canAddStand && Number(st.id) > 12 && (
+                      <button onClick={() => handleDeleteStand(rollModal.standIndex)} className="bg-red-50 hover:bg-red-100 text-red-700 font-bold px-2.5 py-2 rounded-lg text-xs flex items-center gap-1 border border-red-200" title="حذف الستاند">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {isManagerLike && rollModal.isEditingInfo && (
@@ -1782,45 +1966,99 @@ export default function App() {
         </div>
       )}
 
-      {/* الشريط العلوي */}
-      <nav className="bg-slate-900 text-white p-2 rounded flex flex-col gap-2 flex-none shadow-sm select-none">
-        <div className="flex justify-between items-center relative h-10">
-          <div onClick={handleSecretAdminTrigger} className="flex items-center gap-2 z-10 cursor-pointer">
-            {customLogo && <div className="bg-white p-1 rounded shadow-sm flex shrink-0"><img src={customLogo} alt="Logo" className="h-5 sm:h-7 w-auto max-w-[70px] sm:max-w-[120px] object-contain" /></div>}
-            <span className="font-bold text-xs sm:text-sm hidden md:inline text-slate-100">الجيوشي للصلب - Roll Tracker</span>
+      {/* ===== الشريط العلوي المنسق (بدون أي تداخل مع الساعة) ===== */}
+      <nav className="bg-slate-900 text-white p-2 rounded-lg flex flex-col gap-2 flex-none shadow-sm select-none">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          
+          {/* القسم الأيمن: اللوجو وعنوان الموقع + الساعة */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div onClick={handleSecretAdminTrigger} className="flex items-center gap-2 cursor-pointer">
+              {customLogo ? (
+                <div className="bg-white p-1 rounded shadow-sm flex shrink-0">
+                  <img src={customLogo} alt="Logo" className="h-5 sm:h-6 w-auto max-w-[65px] sm:max-w-[100px] object-contain" />
+                </div>
+              ) : (
+                <div className="bg-blue-600/20 border border-blue-500/40 p-1.5 rounded-lg">
+                  <Settings2 className="w-4 h-4 text-blue-400" />
+                </div>
+              )}
+              <span className="font-black text-xs sm:text-sm text-slate-100 hidden sm:inline">الجيوشي للصلب</span>
+            </div>
+            <LiveClock />
           </div>
-          <div className="absolute left-1/2 -translate-x-1/2 z-0"><LiveClock /></div>
-          <div className="flex items-center gap-1.5 sm:gap-2 z-10">
+
+          {/* القسم الأيسر: أيقونات التحكم + اسم المستخدم + خروج */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {isManagerLike && (
-              <button onClick={() => setApprovalsOpen(true)} className="relative bg-amber-500 hover:bg-amber-400 text-slate-950 p-1.5 rounded shadow-sm" title="طلبات الموافقة">
-                <Inbox className="w-3.5 h-3.5" />
-                {pendingCount > 0 && <span className="absolute -top-1.5 -left-1.5 bg-red-600 text-white text-[9px] font-black rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{pendingCount}</span>}
+              <button
+                onClick={() => setApprovalsOpen(true)}
+                className="relative bg-amber-500 hover:bg-amber-400 text-slate-950 px-2 py-1 rounded-md text-[10px] font-black flex items-center gap-1 shadow-sm transition-colors"
+                title="طلبات الموافقة"
+              >
+                <Inbox className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden md:inline">الطلبات</span>
+                {pendingCount > 0 && (
+                  <span className="bg-red-600 text-white text-[9px] font-black rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                    {pendingCount}
+                  </span>
+                )}
               </button>
             )}
+
+            {canAddStand && (
+              <button
+                onClick={openAddStandModal}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm transition-colors"
+                title="إضافة ستاند جديد"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden md:inline">إضافة ستاند</span>
+              </button>
+            )}
+
             {canManageUsers && (
-              <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm" title="إدارة أكواد الفنيين والمهندسين">
-                <Users className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">أكواد الأفراد</span>
+              <button
+                onClick={() => setStaffModalOpen(true)}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm transition-colors"
+                title="إدارة أكواد الفنيين والمهندسين"
+              >
+                <Users className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden md:inline">أكواد الأفراد</span>
               </button>
             )}
+
             {(isManagerLike || isSuperAdmin) && (
-              <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 shadow-sm" title="رفع شعار المصنع"><Settings className="w-3.5 h-3.5 text-blue-300" /></button>
+              <button
+                onClick={openSettingsModal}
+                className="bg-slate-800 hover:bg-slate-700 border border-slate-700 p-1.5 rounded-md shadow-sm transition-colors"
+                title="رفع شعار المصنع"
+              >
+                <Settings className="w-3.5 h-3.5 text-blue-300" />
+              </button>
             )}
-            <span className="bg-slate-800 px-2 py-1 rounded text-[10px] font-bold text-blue-300 flex items-center gap-1 border border-slate-700 max-w-[140px] sm:max-w-none truncate">
+
+            <span className="bg-slate-800 px-2 py-1 rounded-md text-[10px] font-bold text-blue-300 flex items-center gap-1.5 border border-slate-700 max-w-[135px] sm:max-w-[200px]">
               <span className={`w-2 h-2 rounded-full shrink-0 ${auth ? 'bg-green-500 shadow-[0_0_5px_#22c55e]' : 'bg-slate-400'}`}></span>
               <span className="truncate">{roleLabel}</span>
             </span>
-            <button onClick={handleLogout} className="text-red-400 hover:text-red-300 text-xs font-bold">خروج</button>
+
+            <button
+              onClick={handleLogout}
+              className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 px-2 py-1 rounded-md text-[10px] font-bold transition-colors"
+            >
+              خروج
+            </button>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center z-10 relative">
+        {/* الصف الثاني: التبويبات + مقاس المنتج */}
+        <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center">
           <div className="flex gap-1.5 w-full sm:w-auto overflow-x-auto">
             {[['dashboard', 'التشغيل والممرات', TrendingUp], ['analytics', 'الإحصائيات', BarChart3], ['archive', 'الأرشيف', Archive]].map(([k, label, Icon]) => (
-              <button key={k} onClick={() => setActiveTab(k)} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all ${activeTab === k ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><Icon className="w-3 h-3" /> {label}</button>
+              <button key={k} onClick={() => setActiveTab(k)} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 transition-all whitespace-nowrap ${activeTab === k ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:bg-slate-700'}`}><Icon className="w-3 h-3" /> {label}</button>
             ))}
             {isSuperAdmin && (
-              <button onClick={() => { setCurrentUser('admin'); setActiveTab('admin'); }} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 shadow' : 'text-amber-400 hover:bg-slate-700'}`}><ShieldAlert className="w-3.5 h-3.5" /> لوحة الأدمن</button>
+              <button onClick={() => { setCurrentUser('admin'); setActiveTab('admin'); }} className={`flex-1 sm:flex-none px-3 py-1.5 text-xs font-bold rounded flex justify-center items-center gap-1 whitespace-nowrap ${activeTab === 'admin' ? 'bg-amber-500 text-slate-950 shadow' : 'text-amber-400 hover:bg-slate-700'}`}><ShieldAlert className="w-3.5 h-3.5" /> لوحة الأدمن</button>
             )}
           </div>
           {activeTab === 'dashboard' && (
@@ -1845,9 +2083,10 @@ export default function App() {
                 <p className="text-xs text-slate-500 font-bold">إدارة حالة الموقع، أكواد الدخول، واختبار النظام</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setStaffModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Users className="w-3.5 h-3.5" /> إدارة أكواد الأفراد</button>
-              <button onClick={() => { setCurrentUser('tech'); setActiveTab('dashboard'); }} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> اختبار كـ فني</button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={openAddStandModal} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> إضافة ستاند جديد</button>
+              <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Users className="w-3.5 h-3.5" /> إدارة أكواد الأفراد</button>
+              <button onClick={() => { setCurrentUser('tech'); setActiveTab('dashboard'); }} className="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> اختبار كـ فني</button>
               <button onClick={() => { setCurrentUser('manager'); setActiveTab('dashboard'); }} className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><UserCog className="w-3.5 h-3.5" /> اختبار كـ مدير</button>
             </div>
           </div>
@@ -1901,30 +2140,70 @@ export default function App() {
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-2 flex-1 overflow-hidden p-1">
 
+          {/* ===== شريط أدوات المدير والمهندس القابل للطي والفتح (يوفر مساحة كبيرة) ===== */}
           {isManagerLike && (
-            <div className="flex flex-col gap-1.5 flex-none bg-white p-2 rounded-lg border border-slate-300 shadow-sm">
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="bg-green-100 p-1.5 border border-green-300 rounded-lg"><p className="text-[10px] font-bold text-green-800">أقل من 80%</p><p className="font-black text-lg text-green-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length}</p></div>
-                <div className="bg-yellow-100 p-1.5 border border-yellow-400 rounded-lg"><p className="text-[10px] font-bold text-yellow-800">إنذار (+80%)</p><p className="font-black text-lg text-yellow-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length}</p></div>
-                <div className="bg-red-100 p-1.5 border border-red-500 rounded-lg"><p className="text-[10px] font-bold text-red-800">خطر (+100%)</p><p className="font-black text-lg text-red-700">{stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length}</p></div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 mt-1">
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Sliders className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
-                  <input type="number" step="0.01" value={billetWeight} onChange={(e) => handleWeightChange(e.target.value)} className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" />
+            <div className="flex flex-col flex-none bg-white rounded-lg border border-slate-300 shadow-sm overflow-hidden">
+              {/* الشريط المدمج الدائم */}
+              <div
+                onClick={() => setIsManagerToolbarOpen(!isManagerToolbarOpen)}
+                className="p-2 flex flex-wrap items-center justify-between gap-2 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+              >
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <span className="bg-green-100 text-green-800 border border-green-300 px-2 py-0.5 rounded-md text-[10px] font-black">
+                    سليم (&lt;80%): {greenCount}
+                  </span>
+                  <span className="bg-yellow-100 text-yellow-800 border border-yellow-400 px-2 py-0.5 rounded-md text-[10px] font-black">
+                    إنذار (+80%): {warnCount}
+                  </span>
+                  <span className="bg-red-100 text-red-800 border border-red-400 px-2 py-0.5 rounded-md text-[10px] font-black">
+                    خطر (+100%): {dangerCount}
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-500 hidden sm:inline">
+                    | إجمالي الستاندات: {stands.length}
+                  </span>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {canManageUsers && (
-                    <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
-                      <Users className="w-3.5 h-3.5" /> أكواد الفنيين والمهندسين
-                    </button>
-                  )}
-                  {exportButtons}
-                  <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><RefreshCw className="w-3 h-3" /> تصفير كل الستاندات</button>
-                  <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><Trash2 className="w-3 h-3" /> مسح الأرشيف</button>
-                </div>
+
+                <button
+                  type="button"
+                  className="bg-slate-800 hover:bg-slate-700 text-white text-[10px] font-bold px-2.5 py-1 rounded-md flex items-center gap-1 shadow-sm"
+                >
+                  <Sliders className="w-3 h-3 text-blue-400" />
+                  <span>{isManagerToolbarOpen ? 'إخفاء الأدوات والتقارير' : 'أدوات المدير والتقارير'}</span>
+                  {isManagerToolbarOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
               </div>
+
+              {/* الجزء القابل للطي والفتح */}
+              {isManagerToolbarOpen && (
+                <div className="px-2.5 pb-2.5 pt-2 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Sliders className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={billetWeight}
+                      onChange={(e) => handleWeightChange(e.target.value)}
+                      className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-white outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {canAddStand && (
+                      <button onClick={openAddStandModal} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                        <Plus className="w-3.5 h-3.5" /> إضافة ستاند جديد
+                      </button>
+                    )}
+                    {canManageUsers && (
+                      <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                        <Users className="w-3.5 h-3.5" /> أكواد الفنيين والمهندسين
+                      </button>
+                    )}
+                    {exportButtons}
+                    <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><RefreshCw className="w-3 h-3" /> تصفير كل الستاندات</button>
+                    <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><Trash2 className="w-3 h-3" /> مسح الأرشيف</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
