@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw,
+  Users, UserCog, Edit3, TrendingUp, AlertTriangle, CheckCircle, RotateCcw,
   Save, Power, Settings2, Archive, CalendarDays, List, BarChart3, RefreshCw,
   Sliders, Trash2, Clock, Settings, X, UploadCloud, History,
   ShieldAlert, Key, Eye, Layers, Wrench, ArrowLeftRight,
@@ -55,6 +55,13 @@ const SHIFTS_NORMAL = ['الوردية الأولى', 'الوردية الثان
 const SHIFTS_FRIDAY = ['الوردية الأولى (12 ساعة)', 'الوردية الثانية (12 ساعة)'];
 const shiftsFor = (isFri) => (isFri ? SHIFTS_FRIDAY : SHIFTS_NORMAL);
 
+const ROLE_TITLES = {
+  tech: 'فني',
+  engineer: 'مهندس',
+  manager: 'مدير',
+  admin: 'أدمن'
+};
+
 const createPassesArray = (count, activePassNum = 1, initialTons = 0) =>
   Array.from({ length: count }, (_, idx) => {
     const pNum = idx + 1;
@@ -76,7 +83,7 @@ const buildStand = (cfg) => {
     totalPasses: cfg.totalPasses, activePass: 1,
     passes: createPassesArray(cfg.totalPasses, 1, 0),
     isActive: true, accumulatedTons: 0, maxLimit: cfg.maxLimit, lastResetDate: todayGB,
-    preCountedShifts: {} // يحفظ البليت المضاف للممر القديم قبل تسجيل الوردية ليتم خصمه تلقائياً عند تسجيل الوردية
+    preCountedShifts: {}
   };
 };
 const buildInitialStands = () => DEFAULT_STANDS_CONFIG.map(buildStand);
@@ -161,13 +168,13 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
   }).join('');
 
   const logs = [...archive].sort((a, b) => b.timestamp - a.timestamp);
-  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, l.tons.toFixed(1), l.time])).join('');
+  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, l.tons.toFixed(1), l.recordedBy || '-', l.time])).join('');
   const sumT = logs.reduce((a, l) => a + l.tons, 0).toFixed(1);
   const sumB = logs.reduce((a, l) => a + l.billets, 0);
 
   const changeRows = changes.map(c => td([c.date, c.shift, c.standName,
-    c.kind === 'newRoll' ? 'تركيب درفيل جديد' : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
-    Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.notes || ''])).join('');
+    c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'})` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
+    Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.requestedBy || '-', c.approvedBy || '-', c.notes || ''])).join('');
 
   return `<html dir="rtl" lang="ar" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
 <title>تقرير الجيوشي للصلب</title>
@@ -187,10 +194,10 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
 <h2>حالة الستاندات</h2>
 <table>${th(['الستاند', 'الشكل', 'القطر', 'تاريخ دخول الدرفيل', 'الممر الحالي', 'إنتاج الممر الحالي (طن)', 'الحد الأقصى', 'النسبة', 'إجمالي إنتاج الدرفيل (طن)'])}${standsRows}</table>
 <h2>سجل الإنتاج اليومي</h2>
-<table>${th(['التاريخ', 'اليوم', 'الوردية', 'المقاس', 'البليت', 'الطن', 'وقت التسجيل'])}${archiveRows}
-<tr class="tot"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td></td></tr></table>
+<table>${th(['التاريخ', 'اليوم', 'الوردية', 'المقاس', 'البليت', 'الطن', 'المسجل باسم', 'وقت التسجيل'])}${archiveRows}
+<tr class="tot"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
-<table>${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر (طن)', 'بليت', 'المقاس', 'ملاحظات'])}${changeRows}</table>
+<table>${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
 </body></html>`;
 };
 
@@ -215,16 +222,12 @@ const printPDF = (data, onBlocked) => {
 
 /* ======================================================
   دالة حساب تقسيم البليت والأطنان بين الممر القديم والجديد
-  تعالج حالتين بذكاء:
-  1. لو الوردية اتسجلت بالفعل في الأرشيف: يخصم إنتاج الوردية من الرصيد، يضيف الـ 12 بليت للقديم، ويحط الباقي (500 - 12 = 488) على الجديد.
-  2. لو الوردية لسه متسجلتش (أثناء الشغل أو الوردية التالتة): يضيف الـ 12 بليت ع القديم فوراً، ويفتح الجديد بـ 0، ويحفظ 12 بليت في (preCountedShifts) عشان يتخصموا تلقائياً أول ما يسجل إنتاج الوردية.
   ====================================================== */
 const computePassSplit = (stand, shiftDateGB, shiftName, oldBilletsInput, billetWeight, archive) => {
   const currentTons = Number(stand.accumulatedTons) || 0;
   const oldShiftBillets = Number(oldBilletsInput) || 0;
   const oldShiftExtraTons = oldShiftBillets * billetWeight;
 
-  // هل الوردية المختارة لتغيير الممر تم تسجيل إنتاجها في الأرشيف أم لم تسجل بعد؟
   const shiftLog = (archive || []).find(l => l.date === shiftDateGB && l.shift === shiftName);
   const isShiftAlreadyLogged = Boolean(shiftLog);
 
@@ -232,7 +235,6 @@ const computePassSplit = (stand, shiftDateGB, shiftName, oldBilletsInput, billet
   const prevPreCounted = Number((stand.preCountedShifts || {})[shiftKey] || 0);
 
   if (oldShiftBillets <= 0) {
-    // لم يدخل عدد بليت جزئي -> كامل الرصيد الحالي يذهب للممر القديم، والجديد يبدأ من 0
     return {
       isShiftAlreadyLogged,
       finalOldPassTons: currentTons,
@@ -244,15 +246,9 @@ const computePassSplit = (stand, shiftDateGB, shiftName, oldBilletsInput, billet
   }
 
   if (isShiftAlreadyLogged) {
-    // الوردية مسجلة بالفعل (مثلاً وردية 1: 500 + وردية 2: 500 = 1000 بليت في الرصيد)
-    // حصة الوردية الثانية التي دخلت الرصيد = إنتاج الوردية المسجل ناقص أي بليت اتخصم منها سابقاً
     const netShiftTonsInStand = Math.max(0, Number(shiftLog.tons) - (prevPreCounted * billetWeight));
-    // رصيد الممر قبل هذه الوردية (الـ 500 الأولى)
     const baseTonsBeforeShift = Math.max(0, currentTons - netShiftTonsInStand);
-
-    // الممر القديم يأخذ رصيده السابق + الـ 12 بليت من الوردية الحالية
     const finalOldPassTons = baseTonsBeforeShift + oldShiftExtraTons;
-    // الممر الجديد يأخذ باقي الوردية الحالية (مثلاً 500 - 12 = 488 بليت)
     const newPassOpeningTons = Math.max(0, netShiftTonsInStand - oldShiftExtraTons);
     const transferredNowBillets = Math.max(0, (Number(shiftLog.billets) - prevPreCounted) - oldShiftBillets);
 
@@ -265,10 +261,7 @@ const computePassSplit = (stand, shiftDateGB, shiftName, oldBilletsInput, billet
       transferredNowBillets
     };
   } else {
-    // الوردية لم تسجل بعد (الفني في أول الوردية التانية أو التالتة وعمل 12 بليت وغير ممر)
-    // يضيف الـ 12 بليت على رصيد الممر القديم فوراً
     const finalOldPassTons = currentTons + oldShiftExtraTons;
-    // الممر الجديد يبدأ من 0، وعند تسجيل الوردية لاحقاً سيتم خصم الـ 12 بليت وإضافة الباقي للجديد
     const newPassOpeningTons = 0;
     const newPreCountedForShift = prevPreCounted + oldShiftBillets;
 
@@ -302,12 +295,36 @@ const applyPassChange = (list, req, billetWeight, approver, archive) => {
 
   if (req.kind === 'newRoll') {
     const total = st.passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
-    st.entryDate = req.date; st.lastResetDate = req.date;
-    st.activePass = 1; st.accumulatedTons = 0;
+    const newTotalPasses = Math.max(1, Math.min(40, Number(req.newTotalPasses) || st.totalPasses));
+    if (req.newRollCode !== undefined) st.rollCode = req.newRollCode;
+    if (req.newDiameter !== undefined && req.newDiameter !== '') st.diameter = req.newDiameter;
+    if (req.newHardness !== undefined && req.newHardness !== '') st.hardness = req.newHardness;
+    if (req.newType !== undefined && req.newType !== '') st.type = req.newType;
+    st.totalPasses = newTotalPasses;
+    st.entryDate = req.date || new Date().toLocaleDateString('en-GB');
+    st.lastResetDate = st.entryDate;
+    st.activePass = 1;
+    st.accumulatedTons = 0;
     st.preCountedShifts = {};
-    st.passes = createPassesArray(st.totalPasses, 1, 0);
-    log = { ...base, kind: 'newRoll', fromPass: prev, toPass: 1, tons: total, billetsAtChange: 0,
-      notes: req.notes || 'تركيب درفيل جديد' };
+    st.passes = createPassesArray(newTotalPasses, 1, 0);
+
+    const specSummary = [
+      st.diameter && `قطر ${st.diameter}`,
+      st.hardness && `صلابة ${st.hardness}`,
+      `${newTotalPasses} ممر`
+    ].filter(Boolean).join(' - ');
+
+    log = {
+      ...base,
+      kind: 'newRoll',
+      fromPass: prev,
+      toPass: 1,
+      tons: total,
+      billetsAtChange: 0,
+      newDiameter: st.diameter,
+      newTotalPasses,
+      notes: req.notes ? `${req.notes} (${specSummary})` : `تركيب درفيل جديد (${specSummary})`
+    };
   } else {
     const target = Number(req.targetPass) || prev;
     const oldBillets = Number(req.billets) || 0;
@@ -359,17 +376,24 @@ const Overlay = ({ z = 50, children }) => (
 );
 
 /* ======================================================
-  التطبيق
+  التطبيق الرئيسي
   ====================================================== */
 export default function App() {
-  const [currentUser, setCurrentUser] = useState('none'); // 'none' | 'tech' | 'manager' | 'admin'
+  const [currentUser, setCurrentUser] = useState('none'); // 'none' | 'tech' | 'engineer' | 'manager' | 'admin'
+  const [loggedUserInfo, setLoggedUserInfo] = useState({ name: '', roleTitle: '', code: '' });
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [userAuth, setUserAuth] = useState(null);
   const appId = 'al-gioshy-steel-rolls';
 
-  const isManagerLike = currentUser === 'manager' || currentUser === 'admin';
-  const roleLabel = currentUser === 'tech' ? 'فني' : currentUser === 'manager' ? 'مدير' : 'أدمن';
+  // المدير والمهندس والأدمن يملكون صلاحية الاعتماد المباشر، بينما المدير والأدمن يملكون إدارة النظام والأكواد
+  const isManagerLike = currentUser === 'manager' || currentUser === 'admin' || currentUser === 'engineer';
+  const canManageUsers = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
+  const canRecordShift = currentUser === 'tech' || currentUser === 'engineer' || currentUser === 'admin';
+
+  const roleLabel = loggedUserInfo.name
+    ? `${loggedUserInfo.roleTitle}: ${loggedUserInfo.name}`
+    : (ROLE_TITLES[currentUser] || 'مستخدم');
 
   const secretTapCount = useRef(0);
   const secretTapTimer = useRef(null);
@@ -390,6 +414,7 @@ export default function App() {
   const [productionArchive, setProductionArchive] = useState([]);
   const [passChanges, setPassChanges] = useState([]);
   const [pendingList, setPendingList] = useState([]);
+  const [staffAccounts, setStaffAccounts] = useState([]); // قائمة أكواد الفنيين والمهندسين والمديرين بأسمائهم
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [billetWeight, setBilletWeight] = useState(0.75);
@@ -397,6 +422,10 @@ export default function App() {
   const [customLogo, setCustomLogo] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempLogoUrl, setTempLogoUrl] = useState('');
+
+  // نافذة إدارة أكواد الأفراد والمهندسين (للمدير)
+  const [staffModalOpen, setStaffModalOpen] = useState(false);
+  const [newStaffForm, setNewStaffForm] = useState({ name: '', code: '', role: 'tech' });
 
   const [adminState, setAdminState] = useState({
     isMaintenance: false,
@@ -408,6 +437,12 @@ export default function App() {
 
   const [rollModal, setRollModal] = useState({ isOpen: false, standIndex: null, isEditingInfo: false });
   const [rollEditForm, setRollEditForm] = useState({ rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6 });
+
+  // نافذة إدخال بيانات الدرفيل الجديد عند تغييره
+  const [newRollModal, setNewRollModal] = useState({ isOpen: false, standIndex: null });
+  const [newRollForm, setNewRollForm] = useState({
+    rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6, notes: ''
+  });
 
   const [resetModal, setResetModal] = useState({ isOpen: false, standIndex: null });
   const [resetBillets, setResetBillets] = useState('');
@@ -438,7 +473,7 @@ export default function App() {
     if (!userAuth || !db) return;
     const ref = (name) => doc(db, 'factory', appId, 'data', name);
     const standsRef = ref('standsState'), archiveRef = ref('archiveState'), passChangesRef = ref('passChangesState'),
-      settingsRef = ref('settingsState'), adminRef = ref('adminState'), pendingRef = ref('pendingState');
+      settingsRef = ref('settingsState'), adminRef = ref('adminState'), pendingRef = ref('pendingState'), staffRef = ref('staffState');
 
     const u1 = onSnapshot(standsRef, (snap) => {
       if (snap.exists() && snap.data().standsList) setStands(normalizeList(snap.data().standsList));
@@ -470,7 +505,10 @@ export default function App() {
     const u6 = onSnapshot(pendingRef, (snap) => {
       if (snap.exists()) setPendingList(snap.data().pendingList || []); else setDoc(pendingRef, { pendingList: [] });
     });
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+    const u7 = onSnapshot(staffRef, (snap) => {
+      if (snap.exists()) setStaffAccounts(snap.data().staffList || []); else setDoc(staffRef, { staffList: [] });
+    });
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
   }, [userAuth]);
 
   useEffect(() => {
@@ -519,7 +557,7 @@ export default function App() {
   };
 
   /* ---------- الحفظ السحابي ---------- */
-  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending } = {}) => {
+  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending, staff } = {}) => {
     if (userAuth && db) {
       try {
         const ref = (name) => doc(db, 'factory', appId, 'data', name);
@@ -527,6 +565,7 @@ export default function App() {
         if (archive !== undefined) await setDoc(ref('archiveState'), { archiveList: archive });
         if (changes !== undefined) await setDoc(ref('passChangesState'), { passChangesList: changes });
         if (pending !== undefined) await setDoc(ref('pendingState'), { pendingList: pending });
+        if (staff !== undefined) await setDoc(ref('staffState'), { staffList: staff });
         if (admin !== undefined) await setDoc(ref('adminState'), admin, { merge: true });
         const upd = {};
         if (weight !== undefined) upd.billetWeight = weight;
@@ -541,9 +580,44 @@ export default function App() {
       if (logo !== undefined) setCustomLogo(logo);
       if (changes !== undefined) setPassChanges(changes);
       if (pending !== undefined) setPendingList(pending);
+      if (staff !== undefined) setStaffAccounts(staff);
       if (productSize !== undefined) setSelectedProductSize(productSize);
       if (admin !== undefined) setAdminState(prev => ({ ...prev, ...admin }));
     }
+  };
+
+  /* ---------- إدارة أكواد الأفراد والمهندسين (للمدير) ---------- */
+  const handleAddStaffMember = (e) => {
+    e.preventDefault();
+    const cleanName = newStaffForm.name.trim();
+    const cleanCode = newStaffForm.code.trim();
+    if (!cleanName || !cleanCode) {
+      showAlert('بيانات ناقصة', 'يرجى كتابة اسم الفرد والكود الخاص به.');
+      return;
+    }
+    const codeExists = staffAccounts.some(u => u.code === cleanCode) ||
+      [adminState.techCode, adminState.managerCode, adminState.adminCode].includes(cleanCode);
+    if (codeExists) {
+      showAlert('كود مستخدم', 'هذا الكود مستخدم بالفعل، اختر كوداً آخر.');
+      return;
+    }
+    const newMember = {
+      id: Date.now(),
+      name: cleanName,
+      code: cleanCode,
+      role: newStaffForm.role, // 'tech' | 'engineer' | 'manager'
+      roleTitle: ROLE_TITLES[newStaffForm.role] || 'فني',
+      createdAt: new Date().toLocaleDateString('en-GB'),
+      createdBy: roleLabel
+    };
+    const updated = [newMember, ...staffAccounts];
+    save({ staff: updated });
+    setNewStaffForm({ name: '', code: '', role: 'tech' });
+  };
+
+  const handleDeleteStaffMember = (id) => {
+    const updated = staffAccounts.filter(u => u.id !== id);
+    save({ staff: updated });
   };
 
   const handleProductSizeChange = (size) => {
@@ -625,7 +699,7 @@ export default function App() {
     date: new Date().toLocaleDateString('en-GB'), shift: selectedShift, ...extra
   });
 
-  // الفني يرسل طلب / المدير ينفذ مباشرة
+  // الفني يرسل طلب / المدير أو المهندس ينفذ مباشرة
   const submitChange = (req) => {
     if (isManagerLike) {
       const r = applyPassChange(stands, req, billetWeight, roleLabel, productionArchive);
@@ -634,21 +708,47 @@ export default function App() {
       return;
     }
     save({ pending: [req, ...pendingList] });
-    showAlert('تم إرسال الطلب', 'تم إرسال طلب التغيير للمدير. هيتنفذ بعد موافقته، وتقدر تتابع حالته من كارت الستاند.');
+    showAlert('تم إرسال الطلب', `تم إرسال الطلب باسم (${roleLabel}) للمدير. هيتنفذ بعد موافقته، وتقدر تتابع حالته من كارت الستاند.`);
   };
 
+  // فتح نافذة إدخال بيانات الدرفيل الجديد
   const handleInstallNewRoll = () => {
     const idx = rollModal.standIndex;
     if (idx === null) return;
     const st = stands[idx];
-    if (!isManagerLike && pendingFor(st.id).length) { showAlert('يوجد طلب معلّق', 'فيه طلب لهذا الستاند بانتظار موافقة المدير.'); return; }
-    showConfirm(
-      "تركيب درفيل جديد",
-      isManagerLike
-        ? "سيتم تصفير جميع الممرات والبدء من الممر 1 بتاريخ اليوم."
-        : "سيتم إرسال طلب تركيب درفيل جديد للمدير. لن يتغير شيء قبل موافقته.",
-      () => submitChange(buildRequest(st, 'newRoll', { notes: 'تركيب درفيل جديد' }))
-    );
+    if (!isManagerLike && pendingFor(st.id).length) {
+      showAlert('يوجد طلب معلّق', 'فيه طلب لهذا الستاند بانتظار موافقة المدير.');
+      return;
+    }
+    setNewRollForm({
+      rollCode: st.rollCode || '',
+      diameter: st.diameter || '',
+      hardness: st.hardness || '',
+      type: st.type || '',
+      entryDate: formatDateToISO(currentProdDate),
+      totalPasses: st.totalPasses || 6,
+      notes: ''
+    });
+    setNewRollModal({ isOpen: true, standIndex: idx });
+  };
+
+  const confirmInstallNewRoll = (e) => {
+    e.preventDefault();
+    const idx = newRollModal.standIndex;
+    if (idx === null) return;
+    const st = stands[idx];
+    const entryDateGB = formatDateToGB(newRollForm.entryDate) || new Date().toLocaleDateString('en-GB');
+    const req = buildRequest(st, 'newRoll', {
+      date: entryDateGB,
+      newRollCode: newRollForm.rollCode.trim(),
+      newDiameter: newRollForm.diameter.trim(),
+      newHardness: newRollForm.hardness.trim(),
+      newType: newRollForm.type.trim(),
+      newTotalPasses: Math.max(1, Math.min(40, Number(newRollForm.totalPasses) || st.totalPasses)),
+      notes: newRollForm.notes.trim() || 'تركيب درفيل جديد'
+    });
+    submitChange(req);
+    setNewRollModal({ isOpen: false, standIndex: null });
   };
 
   const handleDirectPassStatusChange = (standIdx, passNum, newStatus, customTons) => {
@@ -702,19 +802,30 @@ export default function App() {
   };
 
   /* ---------- موافقات المدير ---------- */
-  const getEdit = (r) => ({ targetPass: r.targetPass, billets: r.billets, notes: r.notes, ...(reqEdits[r.id] || {}) });
+  const getEdit = (r) => ({
+    targetPass: r.targetPass,
+    billets: r.billets,
+    notes: r.notes,
+    newRollCode: r.newRollCode ?? '',
+    newDiameter: r.newDiameter ?? '',
+    newHardness: r.newHardness ?? '',
+    newType: r.newType ?? '',
+    newTotalPasses: r.newTotalPasses ?? 6,
+    date: r.date,
+    ...(reqEdits[r.id] || {})
+  });
   const setEdit = (id, patch) => setReqEdits(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
 
   const approveRequest = (r) => {
-    const merged = { ...r, ...(r.kind === 'pass' ? getEdit(r) : {}) };
+    const ed = getEdit(r);
+    const merged = { ...r, ...ed };
     const res = applyPassChange(stands, merged, billetWeight, roleLabel, productionArchive);
     if (!res) { showAlert('خطأ', 'تعذر تنفيذ الطلب: الستاند غير موجود.'); return; }
-    const edited = JSON.stringify(getEdit(r)) !== JSON.stringify({ targetPass: r.targetPass, billets: r.billets, notes: r.notes });
-    if (edited && r.kind === 'pass') res.log.notes = `${res.log.notes} (عُدّل بواسطة المدير)`;
+    if (reqEdits[r.id]) res.log.notes = `${res.log.notes} (عُدّل بواسطة ${roleLabel})`;
     save({ stands: res.list, changes: [res.log, ...passChanges], pending: pendingList.filter(x => x.id !== r.id) });
   };
   const rejectRequest = (r) => {
-    save({ pending: pendingList.map(x => x.id === r.id ? { ...x, status: 'rejected', rejectedAt: new Date().toLocaleString('ar-EG') } : x) });
+    save({ pending: pendingList.map(x => x.id === r.id ? { ...x, status: 'rejected', rejectedAt: new Date().toLocaleString('ar-EG'), rejectedBy: roleLabel } : x) });
   };
   const dismissRequest = (id) => save({ pending: pendingList.filter(x => x.id !== id) });
 
@@ -736,8 +847,8 @@ export default function App() {
   };
   const handleWeightChange = (v) => { const val = Number(v); if (val > 0) save({ weight: val }); };
 
-  /* ---------- إنتاج الوردية (مع الخصم التلقائي لأي بليت اتضاف للممر القديم قبل تقفيل الوردية) ---------- */
-  const currentDateStr = currentProdDate.getLocaleDateString ? currentProdDate.toLocaleDateString('en-GB') : new Date(currentProdDate).toLocaleDateString('en-GB');
+  /* ---------- إنتاج الوردية ---------- */
+  const currentDateStr = currentProdDate.toLocaleDateString('en-GB');
   const existingShiftLog = productionArchive.find(l => l.date === currentDateStr && l.shift === selectedShift);
 
   const handleAddShiftProduction = () => {
@@ -747,7 +858,6 @@ export default function App() {
     commitShift('add');
   };
 
-  // mode: 'add' = تسجيل/إضافة على الموجود  |  'replace' = استبدال الرقم المسجّل
   const commitShift = (mode) => {
     setDupModal(false);
     const n = Number(shiftBillets);
@@ -767,10 +877,8 @@ export default function App() {
 
       let deltaTons = 0;
       if (!existing) {
-        // أول مرة تتسجل الوردية دي: نخصم منها أي بليت اتسجل للممر القديم أثناء الوردية (مثل الـ 12 بليت)
         const netBilletsForNewPass = Math.max(0, n - preCountedBillets);
         deltaTons = netBilletsForNewPass * billetWeight;
-        // تصفير المخصوم بعد تطبيقه حتى لا يخصم مرتين لو أضاف بليت إضافي لنفس الوردية
         if (preCountedBillets > 0) {
           delete preCountedMap[shiftKey];
         }
@@ -795,11 +903,11 @@ export default function App() {
         ...l,
         billets: mode === 'replace' ? n : l.billets + n,
         tons: mode === 'replace' ? newTons : l.tons + newTons,
-        time: saveTime, productSize: selectedProductSize, timestamp: now.getTime()
+        time: saveTime, productSize: selectedProductSize, recordedBy: roleLabel, timestamp: now.getTime()
       } : l);
     } else {
       archive = [{ id: Date.now(), date: currentDateStr, dayName, time: saveTime, shift: selectedShift,
-        billets: n, tons: newTons, productSize: selectedProductSize, timestamp: now.getTime() }, ...productionArchive];
+        billets: n, tons: newTons, productSize: selectedProductSize, recordedBy: roleLabel, timestamp: now.getTime() }, ...productionArchive];
     }
     save({ stands: newStands, archive });
 
@@ -809,12 +917,12 @@ export default function App() {
       const nd = new Date(currentProdDate); nd.setDate(nd.getDate() + 1);
       setCurrentProdDate(nd);
       setSelectedShift(shiftsFor(nd.getDay() === 5)[0]);
-      showAlert('تم الإقفال', `تم إقفال يوم ${dayName} وتسجيل إنتاج ${selectedShift} بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
+      showAlert('تم الإقفال', `تم إقفال يوم ${dayName} وتسجيل إنتاج ${selectedShift} باسم (${roleLabel}) بنجاح!\n\nتم فتح يوم جديد تلقائياً.`);
     } else setSelectedShift(dayShifts[i >= 0 ? i + 1 : 0]);
     setShiftBillets('');
   };
 
-  /* ---------- الدخول والأدمن ---------- */
+  /* ---------- الدخول بالأكواد الشخصية أو العامة ---------- */
   const openLoginModal = (role) => setLoginPrompt({ isOpen: true, role, codeInput: '', error: '' });
   const closeLogin = () => setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
 
@@ -822,14 +930,60 @@ export default function App() {
     e.preventDefault();
     const { role, codeInput } = loginPrompt;
     const code = codeInput.trim();
+
+    // 1. كود الأدمن السري يفتح من أي بوابة
     if (code === adminState.adminCode) {
-      setIsSuperAdmin(true); setCurrentUser(role === 'admin' ? 'admin' : role);
-      setActiveTab(role === 'admin' ? 'admin' : 'dashboard'); closeLogin(); return;
+      setIsSuperAdmin(true);
+      setLoggedUserInfo({ name: 'مسؤول النظام', roleTitle: 'أدمن', code });
+      setCurrentUser(role === 'admin' ? 'admin' : role);
+      setActiveTab(role === 'admin' ? 'admin' : 'dashboard');
+      closeLogin();
+      return;
     }
+
+    // 2. البحث في أكواد الأفراد والمهندسين والمديرين المسجلين بواسطة المدير
+    const matchedStaff = staffAccounts.find(u => u.code === code);
+    if (matchedStaff) {
+      if (adminState.isMaintenance) {
+        setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
+        return;
+      }
+      // التحقق من توافق البوابة أو السماح بالدخول المباشر حسب صلاحية الكود
+      if (role === 'manager' && matchedStaff.role === 'tech') {
+        setLoginPrompt(p => ({ ...p, error: 'هذا الكود خاص بفني إنتاج وليس للإدارة!' }));
+        return;
+      }
+      setIsSuperAdmin(false);
+      setLoggedUserInfo({
+        name: matchedStaff.name,
+        roleTitle: matchedStaff.roleTitle || ROLE_TITLES[matchedStaff.role] || 'فني',
+        code: matchedStaff.code
+      });
+      setCurrentUser(matchedStaff.role);
+      setActiveTab('dashboard');
+      closeLogin();
+      return;
+    }
+
+    // 3. الأكواد العامة الافتراضية
     const ok = (role === 'tech' && code === adminState.techCode) || (role === 'manager' && code === adminState.managerCode);
-    if (!ok) { setLoginPrompt(p => ({ ...p, error: 'الكود غير صحيح! حاول مرة أخرى.' })); return; }
-    if (adminState.isMaintenance) { setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' })); return; }
-    setIsSuperAdmin(false); setCurrentUser(role); setActiveTab('dashboard'); closeLogin();
+    if (!ok) {
+      setLoginPrompt(p => ({ ...p, error: 'الكود غير صحيح! تأكد من الكود الخاص بك.' }));
+      return;
+    }
+    if (adminState.isMaintenance) {
+      setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
+      return;
+    }
+    setIsSuperAdmin(false);
+    setLoggedUserInfo({
+      name: '',
+      roleTitle: ROLE_TITLES[role] || 'مستخدم',
+      code
+    });
+    setCurrentUser(role);
+    setActiveTab('dashboard');
+    closeLogin();
   };
 
   const handleSuperAdminSwitchRole = (role) => {
@@ -837,7 +991,12 @@ export default function App() {
     setCurrentUser(role);
     if (role === 'admin') setActiveTab('admin'); else if (activeTab === 'admin') setActiveTab('dashboard');
   };
-  const handleLogout = () => { setCurrentUser('none'); setIsSuperAdmin(false); setActiveTab('dashboard'); };
+  const handleLogout = () => {
+    setCurrentUser('none');
+    setLoggedUserInfo({ name: '', roleTitle: '', code: '' });
+    setIsSuperAdmin(false);
+    setActiveTab('dashboard');
+  };
   const handleSaveAdminSettings = (updated) => {
     setAdminState(updated); save({ admin: updated });
     showAlert("تم الحفظ", "تم تحديث إعدادات الأدمن والأكواد بنجاح.");
@@ -892,15 +1051,15 @@ export default function App() {
         <div className="flex justify-between items-center border-b border-slate-700 pb-2">
           <h3 className="font-bold text-sm flex items-center gap-1.5">
             <Key className="w-4 h-4 text-blue-400" />
-            {loginPrompt.role === 'tech' && 'كود دخول فني الإنتاج'}
-            {loginPrompt.role === 'manager' && 'كود دخول إدارة المصنع'}
+            {loginPrompt.role === 'tech' && 'كود الدخول (فني / مهندس)'}
+            {loginPrompt.role === 'manager' && 'كود دخول الإدارة / المهندسين'}
             {loginPrompt.role === 'admin' && 'بوابة مسؤول النظام (Admin)'}
           </h3>
           <button type="button" onClick={closeLogin} className="text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
         </div>
         <input type="password" autoFocus value={loginPrompt.codeInput}
           onChange={(e) => setLoginPrompt(p => ({ ...p, codeInput: e.target.value, error: '' }))}
-          placeholder="أدخل الكود السري..."
+          placeholder="أدخل الكود الشخصي..."
           className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2.5 text-center font-mono text-lg tracking-widest text-white focus:border-blue-500 outline-none" />
         {loginPrompt.error && <p className="text-red-400 text-xs font-bold text-center bg-red-950/50 border border-red-800 p-1.5 rounded">{loginPrompt.error}</p>}
         <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition-colors shadow-lg text-sm">تأكيد الدخول</button>
@@ -935,7 +1094,7 @@ export default function App() {
             <div className="space-y-3">
               <button onClick={() => openLoginModal('tech')} disabled={adminState.isMaintenance}
                 className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                <Edit3 className="w-5 h-5" /> دخول فني الإنتاج
+                <Edit3 className="w-5 h-5" /> دخول فني / مهندس الإنتاج
               </button>
               <button onClick={() => openLoginModal('manager')} disabled={adminState.isMaintenance}
                 className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-white'}`}>
@@ -952,8 +1111,8 @@ export default function App() {
   const resetModalShifts = shiftsFor(isResetDateFriday);
   const selectedRollStand = rollModal.standIndex !== null ? stands[rollModal.standIndex] : null;
   const resetStandObj = resetModal.standIndex !== null ? stands[resetModal.standIndex] : null;
+  const newRollStandObj = newRollModal.standIndex !== null ? stands[newRollModal.standIndex] : null;
 
-  // معاينة حية لحسبة الممر القديم والجديد داخل نافذة التصفير
   const resetPreview = resetStandObj
     ? computePassSplit(
         resetStandObj,
@@ -992,6 +1151,104 @@ export default function App() {
 
       {loginModalJSX}
 
+      {/* ===== نافذة إدارة أكواد الفنيين والمهندسين (للمدير والأدمن) ===== */}
+      {staffModalOpen && canManageUsers && (
+        <Overlay z={85}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 p-3.5 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Users className="w-4 h-4 text-blue-400" />
+                إدارة أكواد وصلاحيات فريق العمل (فني / مهندس / مدير)
+              </h3>
+              <button onClick={() => setStaffModalOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="p-4 overflow-y-auto flex-1 flex flex-col gap-4 bg-slate-50">
+              <form onSubmit={handleAddStaffMember} className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3">
+                <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Key className="w-4 h-4 text-blue-600" /> إضافة كود فرد جديد باسمه وصلاحيته:
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block mb-1">اسم الفرد (فني / مهندس):</label>
+                    <input
+                      type="text"
+                      value={newStaffForm.name}
+                      onChange={e => setNewStaffForm({ ...newStaffForm, name: e.target.value })}
+                      placeholder="مثال: م. أحمد / فني محمد"
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block mb-1">الكود السري الخاص به:</label>
+                    <input
+                      type="text"
+                      value={newStaffForm.code}
+                      onChange={e => setNewStaffForm({ ...newStaffForm, code: e.target.value })}
+                      placeholder="مثال: 5050"
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-center outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-600 block mb-1">الصلاحية والوظيفة:</label>
+                    <select
+                      value={newStaffForm.role}
+                      onChange={e => setNewStaffForm({ ...newStaffForm, role: e.target.value })}
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold bg-white outline-none focus:border-blue-500"
+                    >
+                      <option value="tech">فني إنتاج (يرسل طلبات للموافقة)</option>
+                      <option value="engineer">مهندس إنتاج (اعتماد مباشر + تسجيل)</option>
+                      <option value="manager">مدير مصنع (كامل الصلاحيات)</option>
+                    </select>
+                  </div>
+                </div>
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs shadow transition-colors">
+                  + إنشاء وحفظ الكود باسم الفرد
+                </button>
+              </form>
+
+              <div className="flex flex-col gap-2">
+                <h4 className="text-xs font-black text-slate-700">الأفراد المسجلون حالياً ({staffAccounts.length}):</h4>
+                {staffAccounts.length === 0 ? (
+                  <div className="text-center py-6 bg-white rounded-xl border border-slate-200 text-slate-400 text-xs font-bold">
+                    لم يتم إضافة أكواد فردية بعد. (الأكواد العامة الحالية: فني {adminState.techCode} | مدير {adminState.managerCode})
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {staffAccounts.map(member => (
+                      <div key={member.id} className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-black text-xs text-slate-900">{member.name}</span>
+                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${
+                              member.role === 'manager' ? 'bg-emerald-100 text-emerald-800' :
+                              member.role === 'engineer' ? 'bg-purple-100 text-purple-800' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {member.roleTitle || ROLE_TITLES[member.role]}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono mt-0.5">
+                            الكود: <strong className="text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">{member.code}</strong>
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteStaffMember(member.id)}
+                          className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
+                          title="حذف الكود"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </Overlay>
+      )}
+
       {/* نافذة: الوردية مسجلة قبل كده */}
       {dupModal && existingShiftLog && (
         <Overlay z={95}>
@@ -1014,6 +1271,109 @@ export default function App() {
               <button onClick={() => setDupModal(false)} className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg">إلغاء</button>
             </div>
           </div>
+        </Overlay>
+      )}
+
+      {/* ===== نافذة إدخال بيانات الدرفيل الجديد عند التغيير ===== */}
+      {newRollModal.isOpen && newRollStandObj && (
+        <Overlay z={65}>
+          <form onSubmit={confirmInstallNewRoll} className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 p-3.5 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-emerald-400" />
+                {isManagerLike ? 'تركيب درفيل جديد وإدخال بياناته' : 'طلب تركيب درفيل جديد'} ({newRollStandObj.name})
+              </h3>
+              <button type="button" onClick={() => setNewRollModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+              {!isManagerLike && (
+                <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
+                  <Hourglass className="w-4 h-4 shrink-0" /> سيتم إرسال مواصفات الدرفيل الجديد باسم ({roleLabel}) للمدير للمراجعة والاعتماد.
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">قطر الدرفيل الجديد (مم):</label>
+                  <input
+                    type="text"
+                    required
+                    value={newRollForm.diameter}
+                    onChange={e => setNewRollForm({ ...newRollForm, diameter: e.target.value })}
+                    placeholder="مثال: 380"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">عدد ممرات الدرفيل الجديد:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="40"
+                    required
+                    value={newRollForm.totalPasses}
+                    onChange={e => setNewRollForm({ ...newRollForm, totalPasses: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">كود الدرفيل الجديد:</label>
+                  <input
+                    type="text"
+                    value={newRollForm.rollCode}
+                    onChange={e => setNewRollForm({ ...newRollForm, rollCode: e.target.value })}
+                    placeholder="اختياري (مثال: 112)"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الصلابة (Hardness):</label>
+                  <input
+                    type="text"
+                    value={newRollForm.hardness}
+                    onChange={e => setNewRollForm({ ...newRollForm, hardness: e.target.value })}
+                    placeholder="مثال: 45 HRC"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">شكل الممر:</label>
+                  <input
+                    type="text"
+                    value={newRollForm.type}
+                    onChange={e => setNewRollForm({ ...newRollForm, type: e.target.value })}
+                    placeholder="بيضاوي / مربع / دائري"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">تاريخ دخول الخدمة:</label>
+                  <input
+                    type="date"
+                    value={newRollForm.entryDate}
+                    onChange={e => setNewRollForm({ ...newRollForm, entryDate: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-700 block mb-1">ملاحظات أو سبب تغيير الدرفيل:</label>
+                <input
+                  type="text"
+                  value={newRollForm.notes}
+                  onChange={e => setNewRollForm({ ...newRollForm, notes: e.target.value })}
+                  placeholder="انتهاء عمر الممرات، خرط درفيل، تغيير مقاس..."
+                  className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg shadow text-xs sm:text-sm mt-1">
+                {isManagerLike ? 'تأكيد تركيب الدرفيل الجديد وتصفير الممرات' : 'إرسال بيانات الدرفيل الجديد للمدير للاعتماد'}
+              </button>
+            </div>
+          </form>
         </Overlay>
       )}
 
@@ -1057,7 +1417,6 @@ export default function App() {
                   <button onClick={() => setRollModal({ isOpen: false, standIndex: null, isEditingInfo: false })} className="text-slate-300 hover:text-white bg-slate-800 p-1.5 rounded-lg shrink-0"><X className="w-5 h-5" /></button>
                 </div>
 
-                {/* شريط حمل الممر الحالي */}
                 <div className="mt-4">
                   <div className="flex justify-between text-[10px] font-bold text-slate-300 mb-1">
                     <span>إنتاج الممر الحالي مقابل الحد الأقصى</span>
@@ -1070,19 +1429,17 @@ export default function App() {
               </div>
 
               <div className="p-3 sm:p-4 overflow-y-auto flex-1 flex flex-col gap-3">
-                {/* طلبات هذا الستاند */}
                 {myPending.map(r => (
                   <div key={r.id} className={`rounded-xl border p-2.5 text-xs font-bold flex items-center justify-between gap-2 ${r.status === 'pending' ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-red-50 border-red-300 text-red-800'}`}>
                     <span className="flex items-center gap-1.5">
                       {r.status === 'pending' ? <Hourglass className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                      {r.status === 'pending' ? 'بانتظار موافقة المدير: ' : 'المدير رفض الطلب: '}
-                      {r.kind === 'newRoll' ? 'تركيب درفيل جديد' : `نقل من ممر ${r.fromPass} إلى ممر ${r.targetPass}`}
+                      {r.status === 'pending' ? `بانتظار موافقة المدير (طلب: ${r.requestedBy}): ` : 'المدير رفض الطلب: '}
+                      {r.kind === 'newRoll' ? `تركيب درفيل جديد (قطر ${r.newDiameter || '-'})` : `نقل من ممر ${r.fromPass} إلى ممر ${r.targetPass}`}
                     </span>
                     {r.status === 'rejected' && <button onClick={() => dismissRequest(r.id)} className="bg-white border border-red-300 px-2 py-0.5 rounded text-[10px]">حسناً</button>}
                   </div>
                 ))}
 
-                {/* المؤشرات */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {kpi('الممر الشغال حالياً', `${st.activePass} / ${st.totalPasses}`, 'ممر', 'text-blue-700')}
                   {kpi('إنتاج الممر الحالي', st.accumulatedTons.toFixed(0), 'طن', stat.text)}
@@ -1090,7 +1447,6 @@ export default function App() {
                   {kpi('ممرات استُهلكت', usedCount, `من ${st.totalPasses}`, 'text-purple-700')}
                 </div>
 
-                {/* الإجراءات */}
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
                   <div className="flex flex-wrap items-center gap-2">
                     <button onClick={() => initiateResetStand(rollModal.standIndex)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow">
@@ -1105,12 +1461,11 @@ export default function App() {
                   </div>
                   {isManagerLike && (
                     <button onClick={() => setRollModal(prev => ({ ...prev, isEditingInfo: !prev.isEditingInfo }))} className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 border border-slate-300">
-                      <Edit3 className="w-3.5 h-3.5 text-blue-600" /> {rollModal.isEditingInfo ? 'إخفاء التعديل' : 'تعديل بيانات الدرفيل'}
+                      <Edit3 className="w-3.5 h-3.5 text-blue-600" /> {rollModal.isEditingInfo ? 'إخفاء التعديل' : 'تعديل بيانات الدرفيل الحالي'}
                     </button>
                   )}
                 </div>
 
-                {/* فورم التعديل (المدير فقط) */}
                 {isManagerLike && rollModal.isEditingInfo && (
                   <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3 grid grid-cols-2 sm:grid-cols-6 gap-2.5 items-end">
                     {[['كود الدرفيل', 'rollCode', 'text'], ['القطر (مم)', 'diameter', 'text'], ['الصلابة', 'hardness', 'text'], ['شكل الممر', 'type', 'text'], ['تاريخ الدخول', 'entryDate', 'date'], ['عدد الممرات', 'totalPasses', 'number']].map(([label, key, type]) => (
@@ -1127,7 +1482,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* تسلسل التشغيل */}
                 <div className="bg-white p-3 rounded-xl border border-slate-200">
                   <h4 className="text-xs font-black text-slate-800 mb-2 flex items-center gap-1.5"><Layers className="w-4 h-4 text-blue-600" /> تسلسل تشغيل الممرات</h4>
                   {ordered.length === 0 ? <p className="text-[11px] text-slate-400 font-bold">لم يبدأ التشغيل بعد.</p> : (
@@ -1146,7 +1500,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* دليل الألوان */}
                 <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[10px] font-bold text-slate-600">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-slate-900 border-2 border-amber-400" />شغال حالياً</span>
@@ -1156,7 +1509,6 @@ export default function App() {
                   <span className="text-slate-400">اضغط على ممر للنقل إليه</span>
                 </div>
 
-                {/* شبكة الممرات */}
                 <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2">
                   {st.passes.map(p => {
                     const isCurrent = p.status === 'active' || p.passNumber === st.activePass;
@@ -1192,7 +1544,7 @@ export default function App() {
         );
       })()}
 
-      {/* ===== نافذة تغيير الممر (مع المعاينة الذكية لحسبة البليت) ===== */}
+      {/* ===== نافذة تغيير الممر ===== */}
       {resetModal.isOpen && resetStandObj && (
         <Overlay z={60}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
@@ -1203,7 +1555,7 @@ export default function App() {
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
               {!isManagerLike && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
-                  <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده.
+                  <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت باسم ({roleLabel}) للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده.
                 </div>
               )}
               <div className="bg-blue-50 border border-blue-200 p-2.5 rounded-lg flex justify-between items-center text-xs font-bold text-blue-900">
@@ -1246,7 +1598,6 @@ export default function App() {
                 <input type="number" value={resetBillets} onChange={e => setResetBillets(e.target.value)} className="w-full border border-slate-300 rounded p-2 font-mono text-xs focus:border-blue-500 outline-none" placeholder="مثال: 12 بليت (أو اتركه فارغاً لو الممر اتغير مع بداية الوردية بالظبط)" />
               </div>
 
-              {/* معاينة حية لحسبة الممر القديم والجديد */}
               {resetPreview && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] flex flex-col gap-1.5">
                   <div className="flex justify-between items-center font-bold">
@@ -1301,7 +1652,9 @@ export default function App() {
                       <span className="font-black text-sm text-slate-900">{r.standName}</span>
                       <span className={`text-[10px] font-black px-2 py-0.5 rounded ${r.kind === 'newRoll' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>{r.kind === 'newRoll' ? 'تركيب درفيل جديد' : 'تغيير ممر'}</span>
                     </div>
-                    <div className="text-[10px] text-slate-500 font-bold">من: {r.requestedBy} | {r.createdAt} | {r.date} - {r.shift} | مقاس {r.productSize}</div>
+                    <div className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-1 rounded">
+                      مقدم الطلب: <strong className="text-blue-700">{r.requestedBy}</strong> | {r.createdAt} | {r.date} - {r.shift} | مقاس {r.productSize}
+                    </div>
                     {r.kind === 'pass' ? (
                       <>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] font-bold">
@@ -1325,11 +1678,28 @@ export default function App() {
                         )}
                       </>
                     ) : (
-                      <p className="text-[11px] text-slate-600 font-bold bg-slate-50 border border-slate-200 rounded p-2">هيتم تصفير كل ممرات {r.standName} والبدء من ممر 1 بتاريخ {r.date}. إنتاج الدرفيل الحالي هيتسجل في السجل.</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-bold bg-emerald-50/60 border border-emerald-200 rounded-lg p-2.5">
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">القطر الجديد (مم):</label>
+                          <input type="text" value={ed.newDiameter} onChange={e => setEdit(r.id, { newDiameter: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">عدد الممرات:</label>
+                          <input type="number" value={ed.newTotalPasses} onChange={e => setEdit(r.id, { newTotalPasses: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">الصلابة:</label>
+                          <input type="text" value={ed.newHardness} onChange={e => setEdit(r.id, { newHardness: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">كود الدرفيل:</label>
+                          <input type="text" value={ed.newRollCode} onChange={e => setEdit(r.id, { newRollCode: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
+                        </div>
+                      </div>
                     )}
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => rejectRequest(r)} className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> رفض</button>
-                      <button onClick={() => approveRequest(r)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow"><Check className="w-3.5 h-3.5" /> اعتماد{r.kind === 'pass' && JSON.stringify(ed) !== JSON.stringify({ targetPass: r.targetPass, billets: r.billets, notes: r.notes }) ? ' بعد التعديل' : ''}</button>
+                      <button onClick={() => approveRequest(r)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow"><Check className="w-3.5 h-3.5" /> اعتماد التنفيذ</button>
                     </div>
                   </div>
                 );
@@ -1358,10 +1728,10 @@ export default function App() {
                   </div>
                   <div className="flex justify-between text-[10px] text-slate-600 font-bold">
                     <span>مقاس: {c.productSize} مم</span>
-                    <span>{c.kind === 'newRoll' ? 'تركيب درفيل جديد' : `من ممر ${c.fromPass} ← ممر ${c.toPass}`}</span>
+                    <span>{c.kind === 'newRoll' ? `تركيب درفيل جديد ${c.newDiameter ? `(قطر ${c.newDiameter})` : ''}` : `من ممر ${c.fromPass} ← ممر ${c.toPass}`}</span>
                     <span>بليت إضافي: {c.billetsAtChange || 0}</span>
                   </div>
-                  {(c.requestedBy || c.approvedBy) && <div className="text-[9px] text-slate-400 font-bold">طلب: {c.requestedBy || '-'} | اعتماد: {c.approvedBy || '-'}</div>}
+                  {(c.requestedBy || c.approvedBy) && <div className="text-[9px] text-slate-500 font-bold">بواسطة: <span className="text-blue-700">{c.requestedBy || '-'}</span> | اعتماد: <span className="text-emerald-700">{c.approvedBy || '-'}</span></div>}
                   <p className="text-[10px] text-slate-700 bg-orange-50 p-1.5 rounded border border-orange-100"><span className="font-bold text-orange-700">ملاحظات:</span> {c.notes}</p>
                 </div>
               ))}
@@ -1427,11 +1797,18 @@ export default function App() {
                 {pendingCount > 0 && <span className="absolute -top-1.5 -left-1.5 bg-red-600 text-white text-[9px] font-black rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{pendingCount}</span>}
               </button>
             )}
+            {canManageUsers && (
+              <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 shadow-sm" title="إدارة أكواد الفنيين والمهندسين">
+                <Users className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">أكواد الأفراد</span>
+              </button>
+            )}
             {(isManagerLike || isSuperAdmin) && (
               <button onClick={openSettingsModal} className="bg-slate-700 p-1.5 rounded hover:bg-slate-600 shadow-sm" title="رفع شعار المصنع"><Settings className="w-3.5 h-3.5 text-blue-300" /></button>
             )}
-            <span className="bg-slate-800 px-2 py-1 rounded text-[10px] font-bold text-blue-300 flex items-center gap-1 border border-slate-700">
-              <span className={`w-2 h-2 rounded-full ${auth ? 'bg-green-500 shadow-[0_0_5px_#22c55e]' : 'bg-slate-400'}`}></span>{roleLabel}
+            <span className="bg-slate-800 px-2 py-1 rounded text-[10px] font-bold text-blue-300 flex items-center gap-1 border border-slate-700 max-w-[140px] sm:max-w-none truncate">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${auth ? 'bg-green-500 shadow-[0_0_5px_#22c55e]' : 'bg-slate-400'}`}></span>
+              <span className="truncate">{roleLabel}</span>
             </span>
             <button onClick={handleLogout} className="text-red-400 hover:text-red-300 text-xs font-bold">خروج</button>
           </div>
@@ -1469,6 +1846,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-2">
+              <button onClick={() => setStaffModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Users className="w-3.5 h-3.5" /> إدارة أكواد الأفراد</button>
               <button onClick={() => { setCurrentUser('tech'); setActiveTab('dashboard'); }} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> اختبار كـ فني</button>
               <button onClick={() => { setCurrentUser('manager'); setActiveTab('dashboard'); }} className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow flex items-center gap-1"><UserCog className="w-3.5 h-3.5" /> اختبار كـ مدير</button>
             </div>
@@ -1483,8 +1861,8 @@ export default function App() {
               <Power className={`w-9 h-9 ${adminState.isMaintenance ? 'text-amber-500' : 'text-emerald-500'}`} />
             </div>
             <div className="bg-purple-50 border border-purple-200 p-4 rounded-xl flex items-center justify-between">
-              <div><span className="text-xs font-bold text-purple-800 block">إجمالي تغييرات الممرات</span><span className="font-mono font-black text-3xl text-purple-900">{passChanges.length}</span><span className="text-[10px] text-purple-600 block mt-1">عملية مسجلة</span></div>
-              <Layers className="w-10 h-10 text-purple-400 opacity-70" />
+              <div><span className="text-xs font-bold text-purple-800 block">الأفراد المسجلون بأكواد</span><span className="font-mono font-black text-3xl text-purple-900">{staffAccounts.length}</span><span className="text-[10px] text-purple-600 block mt-1">فني / مهندس / مدير</span></div>
+              <Users className="w-10 h-10 text-purple-400 opacity-70" />
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
@@ -1503,9 +1881,9 @@ export default function App() {
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-            <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Key className="w-4 h-4 text-blue-600" /> إدارة أكواد الدخول</h3>
+            <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Key className="w-4 h-4 text-blue-600" /> الأكواد العامة الافتراضية</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {[['كود فني الإنتاج', 'techCode', 'text-blue-700'], ['كود مدير المصنع', 'managerCode', 'text-emerald-700'], ['كود الأدمن (Admin)', 'adminCode', 'text-amber-700']].map(([label, key, cls]) => (
+              {[['كود فني الإنتاج العام', 'techCode', 'text-blue-700'], ['كود مدير المصنع العام', 'managerCode', 'text-emerald-700'], ['كود الأدمن (Admin)', 'adminCode', 'text-amber-700']].map(([label, key, cls]) => (
                 <div key={key} className="bg-white p-3 rounded-lg border border-slate-200">
                   <label className={`text-xs font-bold block mb-1 ${cls}`}>{label}:</label>
                   <input type="text" value={adminState[key]} onChange={(e) => setAdminState({ ...adminState, [key]: e.target.value })} className="w-full p-2 border border-slate-300 rounded font-mono text-sm font-bold text-center" />
@@ -1537,6 +1915,11 @@ export default function App() {
                   <input type="number" step="0.01" value={billetWeight} onChange={(e) => handleWeightChange(e.target.value)} className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-slate-50 outline-none focus:border-blue-500" />
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {canManageUsers && (
+                    <button onClick={() => setStaffModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
+                      <Users className="w-3.5 h-3.5" /> أكواد الفنيين والمهندسين
+                    </button>
+                  )}
                   {exportButtons}
                   <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><RefreshCw className="w-3 h-3" /> تصفير كل الستاندات</button>
                   <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><Trash2 className="w-3 h-3" /> مسح الأرشيف</button>
@@ -1545,7 +1928,7 @@ export default function App() {
             </div>
           )}
 
-          {(currentUser === 'tech' || currentUser === 'admin') && (
+          {canRecordShift && (
             <div className="bg-white p-2 rounded-lg shadow-sm flex flex-col flex-none border border-slate-300 gap-2">
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-bold p-1.5 rounded flex justify-between items-center">
                 <button onClick={() => handleDateChange(-1)} className="px-3 py-1 bg-blue-200 hover:bg-blue-300 rounded active:scale-95 text-blue-900">يوم سابق</button>
@@ -1563,7 +1946,7 @@ export default function App() {
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   الوردية دي متسجلة قبل كده: <span className="font-mono">{existingShiftLog.billets} بليت / {existingShiftLog.tons.toFixed(1)} طن</span>
-                  <span className="text-amber-700 font-normal">(الساعة {existingShiftLog.time}) - هتختار استبدال أو إضافة وقت الحفظ</span>
+                  <span className="text-amber-700 font-normal">(بواسطة {existingShiftLog.recordedBy || 'فني'} الساعة {existingShiftLog.time})</span>
                 </div>
               )}
 
@@ -1603,7 +1986,7 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                       <button onClick={() => setHistoryModal({ isOpen: true, standId: stand.id })} className="p-1 text-blue-600 bg-blue-100 hover:bg-blue-200 rounded" title="سجل الممر"><History className="w-3.5 h-3.5" /></button>
-                      {(currentUser === 'tech' || currentUser === 'admin') ? (
+                      {canRecordShift ? (
                         <button onClick={(e) => handleToggleActive(idx, e)} className={`p-1 rounded ${stand.isActive ? 'text-green-600 bg-white/80 hover:bg-white' : 'text-slate-500 bg-black/10'}`}><Power className="w-3.5 h-3.5" /></button>
                       ) : (status.color === 'danger' && <AlertTriangle className="w-4 h-4 text-red-500 animate-ping" />)}
                     </div>
@@ -1676,7 +2059,8 @@ export default function App() {
                           <span className="font-bold text-xs text-slate-800 flex items-center gap-1"><Settings2 className="w-3.5 h-3.5 text-blue-500" /> {c.standName || `ستاند ${c.standId}`}</span>
                           <span className="text-[10px] font-black text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">{Number(c.tons).toFixed(1)} طن</span>
                         </div>
-                        <div className="flex justify-between text-[9px] text-slate-600 font-bold"><span>{c.productSize} مم</span><span className="text-blue-700">{c.kind === 'newRoll' ? 'درفيل جديد' : `ممر ${c.fromPass} ← ${c.toPass}`}</span></div>
+                        <div className="flex justify-between text-[9px] text-slate-600 font-bold"><span>{c.productSize} مم</span><span className="text-blue-700">{c.kind === 'newRoll' ? `درفيل جديد ${c.newDiameter ? `(${c.newDiameter})` : ''}` : `ممر ${c.fromPass} ← ${c.toPass}`}</span></div>
+                        {c.requestedBy && <div className="text-[8px] text-slate-500 font-bold">بواسطة: {c.requestedBy}</div>}
                         <div className="flex justify-between text-[8px] text-slate-400 font-mono"><span dir="ltr">{c.date}</span><span dir="ltr">{c.shift}</span></div>
                         <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded border border-slate-100 line-clamp-2" title={c.notes}><span className="font-bold text-blue-600">ملاحظات:</span> {c.notes}</p>
                       </div>
@@ -1741,7 +2125,7 @@ export default function App() {
                         <div key={i} className="flex flex-col sm:flex-row justify-between sm:items-center p-1.5 bg-slate-50 hover:bg-slate-100 rounded border border-slate-100">
                           <div className="flex justify-between sm:justify-start items-center sm:flex-col sm:items-start w-full sm:w-auto">
                             <span className="font-bold text-[10px] text-slate-800">{log.shift.replace('الوردية ', '').replace(' (12 ساعة)', '')} (مقاس {log.productSize || '10'} مم)</span>
-                            <span className="text-[8px] text-slate-400 font-mono mt-0.5">{log.time}</span>
+                            <span className="text-[8px] text-slate-500 font-bold mt-0.5">{log.recordedBy ? `${log.recordedBy} • ` : ''}<span className="font-mono text-slate-400">{log.time}</span></span>
                           </div>
                           <div className="flex justify-between items-center text-left font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200 mt-1 sm:mt-0 w-full sm:w-auto shadow-sm">
                             <div className="text-[10px]"><span className="font-bold text-slate-700">{log.billets}</span><span className="text-[7px] text-slate-400 mr-0.5">بليت</span></div>
