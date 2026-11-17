@@ -35,8 +35,7 @@ try {
   console.error("Firebase init error:", error);
 }
 
-/* 12 ستاند مرتبين: ستاند 1 .. ستاند 12
-   (ستاند 11 و 12 قيمهم مبدئية - عدّلهم من صفحة الدرفيل: عدد الممرات / القطر / الحد الأقصى) */
+/* 12 ستاند مرتبين: ستاند 1 .. ستاند 12 */
 const DEFAULT_STANDS_CONFIG = [
   { type: 'بيضاوي', rollCode: '111', diameter: '380', hardness: '42 HRC', totalPasses: 6, maxLimit: 2500 },
   { type: 'مربع', rollCode: '207', diameter: '374', hardness: '45 HRC', totalPasses: 9, maxLimit: 2500 },
@@ -76,7 +75,8 @@ const buildStand = (cfg) => {
     diameter: cfg.diameter, hardness: cfg.hardness, entryDate: todayGB,
     totalPasses: cfg.totalPasses, activePass: 1,
     passes: createPassesArray(cfg.totalPasses, 1, 0),
-    isActive: true, accumulatedTons: 0, maxLimit: cfg.maxLimit, lastResetDate: todayGB
+    isActive: true, accumulatedTons: 0, maxLimit: cfg.maxLimit, lastResetDate: todayGB,
+    preCountedShifts: {} // يحفظ البليت المضاف للممر القديم قبل تسجيل الوردية ليتم خصمه تلقائياً عند تسجيل الوردية
   };
 };
 const buildInitialStands = () => DEFAULT_STANDS_CONFIG.map(buildStand);
@@ -95,18 +95,18 @@ const normalizeStand = (stand, cfg) => {
   return {
     ...stand,
     id: cfg.id,
-    name: cfg.name, // الاسم دايماً "ستاند N"
+    name: cfg.name,
     type: stand.type ?? cfg.type,
     rollCode: stand.rollCode ?? cfg.rollCode,
     diameter: stand.diameter ?? cfg.diameter,
     hardness: stand.hardness ?? cfg.hardness,
     entryDate: stand.entryDate || stand.lastResetDate || new Date().toLocaleDateString('en-GB'),
     maxLimit: stand.maxLimit || cfg.maxLimit,
-    totalPasses, activePass, passes
+    totalPasses, activePass, passes,
+    preCountedShifts: stand.preCountedShifts || {}
   };
 };
 
-// يحوّل أي قائمة قديمة (11 ستاند بأكواد) إلى 12 ستاند مرتبين. ستاند R.St القديم بيتشال.
 const normalizeList = (raw) =>
   DEFAULT_STANDS_CONFIG.map(cfg => {
     const found = (raw || []).find(s => String(s.id) === cfg.id);
@@ -214,12 +214,82 @@ const printPDF = (data, onBlocked) => {
 };
 
 /* ======================================================
-  تطبيق تغيير ممر / درفيل على قائمة الستاندات (دالة نقية)
+  دالة حساب تقسيم البليت والأطنان بين الممر القديم والجديد
+  تعالج حالتين بذكاء:
+  1. لو الوردية اتسجلت بالفعل في الأرشيف: يخصم إنتاج الوردية من الرصيد، يضيف الـ 12 بليت للقديم، ويحط الباقي (500 - 12 = 488) على الجديد.
+  2. لو الوردية لسه متسجلتش (أثناء الشغل أو الوردية التالتة): يضيف الـ 12 بليت ع القديم فوراً، ويفتح الجديد بـ 0، ويحفظ 12 بليت في (preCountedShifts) عشان يتخصموا تلقائياً أول ما يسجل إنتاج الوردية.
   ====================================================== */
-const applyPassChange = (list, req, billetWeight, approver) => {
+const computePassSplit = (stand, shiftDateGB, shiftName, oldBilletsInput, billetWeight, archive) => {
+  const currentTons = Number(stand.accumulatedTons) || 0;
+  const oldShiftBillets = Number(oldBilletsInput) || 0;
+  const oldShiftExtraTons = oldShiftBillets * billetWeight;
+
+  // هل الوردية المختارة لتغيير الممر تم تسجيل إنتاجها في الأرشيف أم لم تسجل بعد؟
+  const shiftLog = (archive || []).find(l => l.date === shiftDateGB && l.shift === shiftName);
+  const isShiftAlreadyLogged = Boolean(shiftLog);
+
+  const shiftKey = `${shiftDateGB}__${shiftName}`;
+  const prevPreCounted = Number((stand.preCountedShifts || {})[shiftKey] || 0);
+
+  if (oldShiftBillets <= 0) {
+    // لم يدخل عدد بليت جزئي -> كامل الرصيد الحالي يذهب للممر القديم، والجديد يبدأ من 0
+    return {
+      isShiftAlreadyLogged,
+      finalOldPassTons: currentTons,
+      newPassOpeningTons: 0,
+      newPreCountedForShift: prevPreCounted,
+      deductedLaterBillets: 0,
+      transferredNowBillets: 0
+    };
+  }
+
+  if (isShiftAlreadyLogged) {
+    // الوردية مسجلة بالفعل (مثلاً وردية 1: 500 + وردية 2: 500 = 1000 بليت في الرصيد)
+    // حصة الوردية الثانية التي دخلت الرصيد = إنتاج الوردية المسجل ناقص أي بليت اتخصم منها سابقاً
+    const netShiftTonsInStand = Math.max(0, Number(shiftLog.tons) - (prevPreCounted * billetWeight));
+    // رصيد الممر قبل هذه الوردية (الـ 500 الأولى)
+    const baseTonsBeforeShift = Math.max(0, currentTons - netShiftTonsInStand);
+
+    // الممر القديم يأخذ رصيده السابق + الـ 12 بليت من الوردية الحالية
+    const finalOldPassTons = baseTonsBeforeShift + oldShiftExtraTons;
+    // الممر الجديد يأخذ باقي الوردية الحالية (مثلاً 500 - 12 = 488 بليت)
+    const newPassOpeningTons = Math.max(0, netShiftTonsInStand - oldShiftExtraTons);
+    const transferredNowBillets = Math.max(0, (Number(shiftLog.billets) - prevPreCounted) - oldShiftBillets);
+
+    return {
+      isShiftAlreadyLogged: true,
+      finalOldPassTons,
+      newPassOpeningTons,
+      newPreCountedForShift: prevPreCounted,
+      deductedLaterBillets: 0,
+      transferredNowBillets
+    };
+  } else {
+    // الوردية لم تسجل بعد (الفني في أول الوردية التانية أو التالتة وعمل 12 بليت وغير ممر)
+    // يضيف الـ 12 بليت على رصيد الممر القديم فوراً
+    const finalOldPassTons = currentTons + oldShiftExtraTons;
+    // الممر الجديد يبدأ من 0، وعند تسجيل الوردية لاحقاً سيتم خصم الـ 12 بليت وإضافة الباقي للجديد
+    const newPassOpeningTons = 0;
+    const newPreCountedForShift = prevPreCounted + oldShiftBillets;
+
+    return {
+      isShiftAlreadyLogged: false,
+      finalOldPassTons,
+      newPassOpeningTons,
+      newPreCountedForShift,
+      deductedLaterBillets: newPreCountedForShift,
+      transferredNowBillets: 0
+    };
+  }
+};
+
+/* ======================================================
+  تطبيق تغيير ممر / درفيل على قائمة الستاندات
+  ====================================================== */
+const applyPassChange = (list, req, billetWeight, approver, archive) => {
   const idx = list.findIndex(s => String(s.id) === String(req.standId));
   if (idx < 0) return null;
-  const st = { ...list[idx] };
+  const st = { ...list[idx], preCountedShifts: { ...(list[idx].preCountedShifts || {}) } };
   const prev = st.activePass;
   const base = {
     id: Date.now() + Math.floor(Math.random() * 1000),
@@ -234,15 +304,23 @@ const applyPassChange = (list, req, billetWeight, approver) => {
     const total = st.passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
     st.entryDate = req.date; st.lastResetDate = req.date;
     st.activePass = 1; st.accumulatedTons = 0;
+    st.preCountedShifts = {};
     st.passes = createPassesArray(st.totalPasses, 1, 0);
     log = { ...base, kind: 'newRoll', fromPass: prev, toPass: 1, tons: total, billetsAtChange: 0,
       notes: req.notes || 'تركيب درفيل جديد' };
   } else {
     const target = Number(req.targetPass) || prev;
     const oldBillets = Number(req.billets) || 0;
-    const totalNow = st.accumulatedTons;
-    const finalOld = oldBillets > 0 ? oldBillets * billetWeight : totalNow;
-    const opening = Math.max(0, totalNow - finalOld);
+
+    const split = computePassSplit(st, req.date, req.shift, oldBillets, billetWeight, archive);
+    const finalOld = split.finalOldPassTons;
+    const opening = split.newPassOpeningTons;
+
+    const shiftKey = `${req.date}__${req.shift}`;
+    if (split.newPreCountedForShift > 0) {
+      st.preCountedShifts[shiftKey] = split.newPreCountedForShift;
+    }
+
     const maxOrder = Math.max(0, ...st.passes.map(p => p.order || 0));
     st.passes = st.passes.map(p => {
       if (p.passNumber === prev && prev !== target)
@@ -252,9 +330,25 @@ const applyPassChange = (list, req, billetWeight, approver) => {
           order: prev === target ? (p.order || 1) : (p.order ? p.order : maxOrder + 1) };
       return p;
     });
-    st.activePass = target; st.accumulatedTons = opening; st.lastResetDate = req.date;
-    log = { ...base, kind: 'pass', fromPass: prev, toPass: target, tons: finalOld, billetsAtChange: oldBillets,
-      notes: req.notes || `نقل من ممر ${prev} إلى ممر ${target}` };
+    st.activePass = target;
+    st.accumulatedTons = opening;
+    st.lastResetDate = req.date;
+
+    const autoNote = oldBillets > 0
+      ? (split.isShiftAlreadyLogged
+          ? `إضافة ${oldBillets} بليت للممر ${prev} وتحويل باقي الوردية (${split.transferredNowBillets} بليت) للممر ${target}`
+          : `إضافة ${oldBillets} بليت للممر ${prev} (سيتم خصمها تلقائياً عند تسجيل ${req.shift})`)
+      : `نقل من ممر ${prev} إلى ممر ${target}`;
+
+    log = {
+      ...base,
+      kind: 'pass',
+      fromPass: prev,
+      toPass: target,
+      tons: finalOld,
+      billetsAtChange: oldBillets,
+      notes: req.notes ? `${req.notes} — ${autoNote}` : autoNote
+    };
   }
   const newList = [...list]; newList[idx] = st;
   return { list: newList, log };
@@ -295,7 +389,7 @@ export default function App() {
   const [shiftBillets, setShiftBillets] = useState('');
   const [productionArchive, setProductionArchive] = useState([]);
   const [passChanges, setPassChanges] = useState([]);
-  const [pendingList, setPendingList] = useState([]); // طلبات تغيير الممر/الدرفيل بانتظار المدير
+  const [pendingList, setPendingList] = useState([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [billetWeight, setBilletWeight] = useState(0.75);
@@ -324,7 +418,7 @@ export default function App() {
 
   const [historyModal, setHistoryModal] = useState({ isOpen: false, standId: null });
   const [approvalsOpen, setApprovalsOpen] = useState(false);
-  const [reqEdits, setReqEdits] = useState({}); // تعديلات المدير على الطلبات قبل الاعتماد
+  const [reqEdits, setReqEdits] = useState({});
   const [dupModal, setDupModal] = useState(false);
 
   const [modal, setModal] = useState({ isOpen: false, type: '', title: '', message: '', onConfirm: null });
@@ -424,7 +518,7 @@ export default function App() {
     setSelectedShift(s.initialShift);
   };
 
-  /* ---------- الحفظ السحابي (كائن واحد بدل بارامترات كتير) ---------- */
+  /* ---------- الحفظ السحابي ---------- */
   const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending } = {}) => {
     if (userAuth && db) {
       try {
@@ -534,7 +628,7 @@ export default function App() {
   // الفني يرسل طلب / المدير ينفذ مباشرة
   const submitChange = (req) => {
     if (isManagerLike) {
-      const r = applyPassChange(stands, req, billetWeight, roleLabel);
+      const r = applyPassChange(stands, req, billetWeight, roleLabel, productionArchive);
       if (!r) return;
       save({ stands: r.list, changes: [r.log, ...passChanges] });
       return;
@@ -613,7 +707,7 @@ export default function App() {
 
   const approveRequest = (r) => {
     const merged = { ...r, ...(r.kind === 'pass' ? getEdit(r) : {}) };
-    const res = applyPassChange(stands, merged, billetWeight, roleLabel);
+    const res = applyPassChange(stands, merged, billetWeight, roleLabel, productionArchive);
     if (!res) { showAlert('خطأ', 'تعذر تنفيذ الطلب: الستاند غير موجود.'); return; }
     const edited = JSON.stringify(getEdit(r)) !== JSON.stringify({ targetPass: r.targetPass, billets: r.billets, notes: r.notes });
     if (edited && r.kind === 'pass') res.log.notes = `${res.log.notes} (عُدّل بواسطة المدير)`;
@@ -627,7 +721,7 @@ export default function App() {
   const handleResetAllStands = () => {
     showConfirm('تحذير شديد', 'هل أنت متأكد من تصفير كافة الستاندات والممرات بالكامل والبدء من ممر 1؟', () => {
       const today = new Date().toLocaleDateString('en-GB');
-      save({ stands: stands.map(s => ({ ...s, activePass: 1, accumulatedTons: 0, lastResetDate: today, passes: createPassesArray(s.totalPasses, 1, 0) })) });
+      save({ stands: stands.map(s => ({ ...s, activePass: 1, accumulatedTons: 0, lastResetDate: today, preCountedShifts: {}, passes: createPassesArray(s.totalPasses, 1, 0) })) });
     });
   };
   const handleClearArchive = () => {
@@ -642,8 +736,8 @@ export default function App() {
   };
   const handleWeightChange = (v) => { const val = Number(v); if (val > 0) save({ weight: val }); };
 
-  /* ---------- إنتاج الوردية (مع كشف التسجيل المسبق) ---------- */
-  const currentDateStr = currentProdDate.toLocaleDateString('en-GB');
+  /* ---------- إنتاج الوردية (مع الخصم التلقائي لأي بليت اتضاف للممر القديم قبل تقفيل الوردية) ---------- */
+  const currentDateStr = currentProdDate.getLocaleDateString ? currentProdDate.toLocaleDateString('en-GB') : new Date(currentProdDate).toLocaleDateString('en-GB');
   const existingShiftLog = productionArchive.find(l => l.date === currentDateStr && l.shift === selectedShift);
 
   const handleAddShiftProduction = () => {
@@ -660,17 +754,39 @@ export default function App() {
     if (n <= 0 || isNaN(n)) return;
     const newTons = n * billetWeight;
     const existing = productionArchive.find(l => l.date === currentDateStr && l.shift === selectedShift);
-    const delta = mode === 'replace' && existing ? newTons - existing.tons : newTons;
 
+    const shiftKey = `${currentDateStr}__${selectedShift}`;
     const now = new Date();
     const saveTime = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
     const dayName = currentProdDate.toLocaleDateString('ar-EG', { weekday: 'long' });
 
     const newStands = stands.map(s => {
       if (!s.isActive) return s;
-      const tons = Math.max(0, s.accumulatedTons + delta);
-      return { ...s, accumulatedTons: tons,
-        passes: s.passes.map(p => p.passNumber === s.activePass ? { ...p, status: 'active', tons, order: p.order || 1 } : p) };
+      const preCountedMap = { ...(s.preCountedShifts || {}) };
+      const preCountedBillets = Number(preCountedMap[shiftKey] || 0);
+
+      let deltaTons = 0;
+      if (!existing) {
+        // أول مرة تتسجل الوردية دي: نخصم منها أي بليت اتسجل للممر القديم أثناء الوردية (مثل الـ 12 بليت)
+        const netBilletsForNewPass = Math.max(0, n - preCountedBillets);
+        deltaTons = netBilletsForNewPass * billetWeight;
+        // تصفير المخصوم بعد تطبيقه حتى لا يخصم مرتين لو أضاف بليت إضافي لنفس الوردية
+        if (preCountedBillets > 0) {
+          delete preCountedMap[shiftKey];
+        }
+      } else if (mode === 'replace') {
+        deltaTons = newTons - existing.tons;
+      } else {
+        deltaTons = newTons;
+      }
+
+      const tons = Math.max(0, s.accumulatedTons + deltaTons);
+      return {
+        ...s,
+        accumulatedTons: tons,
+        preCountedShifts: preCountedMap,
+        passes: s.passes.map(p => p.passNumber === s.activePass ? { ...p, status: 'active', tons, order: p.order || 1 } : p)
+      };
     });
 
     let archive;
@@ -837,6 +953,18 @@ export default function App() {
   const selectedRollStand = rollModal.standIndex !== null ? stands[rollModal.standIndex] : null;
   const resetStandObj = resetModal.standIndex !== null ? stands[resetModal.standIndex] : null;
 
+  // معاينة حية لحسبة الممر القديم والجديد داخل نافذة التصفير
+  const resetPreview = resetStandObj
+    ? computePassSplit(
+        resetStandObj,
+        formatDateToGB(resetDateInput) || currentDateStr,
+        resetShiftInput,
+        resetBillets,
+        billetWeight,
+        productionArchive
+      )
+    : null;
+
   /* ======================================================
     الواجهة الرئيسية
     ====================================================== */
@@ -889,7 +1017,7 @@ export default function App() {
         </Overlay>
       )}
 
-      {/* ===== صفحة الدرفيل (مُعاد تصميمها) ===== */}
+      {/* ===== صفحة الدرفيل ===== */}
       {rollModal.isOpen && selectedRollStand && (() => {
         const st = selectedRollStand;
         const stat = getStandStatus(st.accumulatedTons, st.maxLimit);
@@ -1064,7 +1192,7 @@ export default function App() {
         );
       })()}
 
-      {/* ===== نافذة تغيير الممر ===== */}
+      {/* ===== نافذة تغيير الممر (مع المعاينة الذكية لحسبة البليت) ===== */}
       {resetModal.isOpen && resetStandObj && (
         <Overlay z={60}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
@@ -1075,12 +1203,12 @@ export default function App() {
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
               {!isManagerLike && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
-                  <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده. عداد البليت وإنتاج الوردية مش متأثرين.
+                  <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده.
                 </div>
               )}
               <div className="bg-blue-50 border border-blue-200 p-2.5 rounded-lg flex justify-between items-center text-xs font-bold text-blue-900">
                 <span>الممر الشغال: <strong className="bg-slate-900 text-amber-400 px-2 py-0.5 rounded font-mono">ممر {resetStandObj.activePass}</strong></span>
-                <span>الإنتاج: <strong className="font-mono text-blue-700">{resetStandObj.accumulatedTons.toFixed(0)} طن</strong></span>
+                <span>الرصيد المسجل حالياً: <strong className="font-mono text-blue-700">{resetStandObj.accumulatedTons.toFixed(1)} طن</strong></span>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-black text-slate-800 flex items-center gap-1"><Layers className="w-4 h-4 text-blue-600" /> 1. اختر الممر الجديد:</label>
@@ -1105,16 +1233,40 @@ export default function App() {
                   <input type="date" value={resetDateInput} onChange={handleResetDateChange} className="w-full border border-slate-300 rounded p-1.5 font-mono text-xs focus:border-blue-500 outline-none" />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-slate-700">الوردية:</label>
+                  <label className="text-[10px] font-bold text-slate-700">الوردية التي تم فيها التغيير:</label>
                   <select value={resetShiftInput} onChange={(e) => setResetShiftInput(e.target.value)} className="w-full bg-white border border-slate-300 text-[10px] font-bold p-1.5 rounded outline-none focus:border-blue-500">
                     {resetModalShifts.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-slate-700">عدد بليت الممر القديم (ممر {resetStandObj.activePass}) قبل التغيير:</label>
-                <input type="number" value={resetBillets} onChange={e => setResetBillets(e.target.value)} className="w-full border border-slate-300 rounded p-2 font-mono text-xs focus:border-blue-500 outline-none" placeholder="اتركه فارغاً لحساب كامل الإنتاج الحالي للممر القديم" />
+                <label className="text-[10px] font-bold text-slate-700">
+                  عدد البليت الذي اشتغله الممر القديم (ممر {resetStandObj.activePass}) في بداية ({resetShiftInput}):
+                </label>
+                <input type="number" value={resetBillets} onChange={e => setResetBillets(e.target.value)} className="w-full border border-slate-300 rounded p-2 font-mono text-xs focus:border-blue-500 outline-none" placeholder="مثال: 12 بليت (أو اتركه فارغاً لو الممر اتغير مع بداية الوردية بالظبط)" />
               </div>
+
+              {/* معاينة حية لحسبة الممر القديم والجديد */}
+              {resetPreview && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] flex flex-col gap-1.5">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-600">إجمالي قفل الممر القديم (ممر {resetStandObj.activePass}):</span>
+                    <span className="font-mono font-black text-blue-700">{resetPreview.finalOldPassTons.toFixed(1)} طن</span>
+                  </div>
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-600">افتتاحية الممر الجديد (ممر {resetTargetPass}):</span>
+                    <span className="font-mono font-black text-emerald-700">{resetPreview.newPassOpeningTons.toFixed(1)} طن</span>
+                  </div>
+                  {Number(resetBillets) > 0 && (
+                    <div className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded p-1.5 mt-0.5 leading-relaxed">
+                      {resetPreview.isShiftAlreadyLogged
+                        ? `✓ ${resetShiftInput} مسجلة بالفعل: تم إضافة الـ ${Number(resetBillets)} بليت على رصيد الممر القديم، وتحويل باقي الوردية (${resetPreview.transferredNowBillets} بليت) للممر الجديد.`
+                        : `⏳ ${resetShiftInput} لم تسجل بعد: سيتم إضافة الـ ${Number(resetBillets)} بليت على رصيد الممر القديم فوراً، وعند تسجيل إنتاج ${resetShiftInput} سيتم خصم الـ ${Number(resetBillets)} بليت تلقائياً وحساب الباقي للممر الجديد.`}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold text-slate-700">ملاحظات أو سبب التغيير:</label>
                 <textarea rows="2" value={resetNotes} onChange={e => setResetNotes(e.target.value)} className="w-full border border-slate-300 rounded p-2 text-xs focus:border-blue-500 outline-none resize-none" placeholder="تآكل ممر، خشونة، كسر، تغيير مقاس..."></textarea>
@@ -1140,6 +1292,9 @@ export default function App() {
               {pendingList.filter(r => r.status === 'pending').map(r => {
                 const st = stands.find(s => String(s.id) === String(r.standId));
                 const ed = getEdit(r);
+                const preview = st && r.kind === 'pass'
+                  ? computePassSplit(st, r.date, r.shift, ed.billets, billetWeight, productionArchive)
+                  : null;
                 return (
                   <div key={r.id} className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col gap-2 shadow-sm">
                     <div className="flex justify-between items-center flex-wrap gap-1">
@@ -1148,16 +1303,27 @@ export default function App() {
                     </div>
                     <div className="text-[10px] text-slate-500 font-bold">من: {r.requestedBy} | {r.createdAt} | {r.date} - {r.shift} | مقاس {r.productSize}</div>
                     {r.kind === 'pass' ? (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] font-bold">
-                        <div><label className="block text-slate-600 mb-0.5">من ممر {r.fromPass} إلى ممر:</label>
-                          <select value={ed.targetPass} onChange={e => setEdit(r.id, { targetPass: Number(e.target.value) })} className="w-full border border-slate-300 rounded p-1.5 font-mono bg-white">
-                            {st && st.passes.map(p => <option key={p.passNumber} value={p.passNumber}>ممر {p.passNumber}</option>)}
-                          </select></div>
-                        <div><label className="block text-slate-600 mb-0.5">بليت الممر القديم:</label>
-                          <input type="number" value={ed.billets} onChange={e => setEdit(r.id, { billets: e.target.value })} className="w-full border border-slate-300 rounded p-1.5 font-mono" /></div>
-                        <div className="col-span-2 sm:col-span-1"><label className="block text-slate-600 mb-0.5">ملاحظات:</label>
-                          <input type="text" value={ed.notes || ''} onChange={e => setEdit(r.id, { notes: e.target.value })} className="w-full border border-slate-300 rounded p-1.5" /></div>
-                      </div>
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] font-bold">
+                          <div><label className="block text-slate-600 mb-0.5">من ممر {r.fromPass} إلى ممر:</label>
+                            <select value={ed.targetPass} onChange={e => setEdit(r.id, { targetPass: Number(e.target.value) })} className="w-full border border-slate-300 rounded p-1.5 font-mono bg-white">
+                              {st && st.passes.map(p => <option key={p.passNumber} value={p.passNumber}>ممر {p.passNumber}</option>)}
+                            </select></div>
+                          <div><label className="block text-slate-600 mb-0.5">بليت الممر القديم في {r.shift}:</label>
+                            <input type="number" value={ed.billets} onChange={e => setEdit(r.id, { billets: e.target.value })} className="w-full border border-slate-300 rounded p-1.5 font-mono" /></div>
+                          <div className="col-span-2 sm:col-span-1"><label className="block text-slate-600 mb-0.5">ملاحظات:</label>
+                            <input type="text" value={ed.notes || ''} onChange={e => setEdit(r.id, { notes: e.target.value })} className="w-full border border-slate-300 rounded p-1.5" /></div>
+                        </div>
+                        {preview && (
+                          <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[10px] font-bold text-blue-900 flex flex-wrap justify-between gap-2">
+                            <span>قفل ممر {r.fromPass}: <strong className="font-mono">{preview.finalOldPassTons.toFixed(1)} طن</strong></span>
+                            <span>افتتاحية ممر {ed.targetPass}: <strong className="font-mono">{preview.newPassOpeningTons.toFixed(1)} طن</strong></span>
+                            {!preview.isShiftAlreadyLogged && Number(ed.billets) > 0 && (
+                              <span className="text-amber-800 w-full">سيتم خصم {Number(ed.billets)} بليت تلقائياً عند تسجيل {r.shift}</span>
+                            )}
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <p className="text-[11px] text-slate-600 font-bold bg-slate-50 border border-slate-200 rounded p-2">هيتم تصفير كل ممرات {r.standName} والبدء من ممر 1 بتاريخ {r.date}. إنتاج الدرفيل الحالي هيتسجل في السجل.</p>
                     )}
@@ -1193,7 +1359,7 @@ export default function App() {
                   <div className="flex justify-between text-[10px] text-slate-600 font-bold">
                     <span>مقاس: {c.productSize} مم</span>
                     <span>{c.kind === 'newRoll' ? 'تركيب درفيل جديد' : `من ممر ${c.fromPass} ← ممر ${c.toPass}`}</span>
-                    <span>بليت: {c.billetsAtChange || 0}</span>
+                    <span>بليت إضافي: {c.billetsAtChange || 0}</span>
                   </div>
                   {(c.requestedBy || c.approvedBy) && <div className="text-[9px] text-slate-400 font-bold">طلب: {c.requestedBy || '-'} | اعتماد: {c.approvedBy || '-'}</div>}
                   <p className="text-[10px] text-slate-700 bg-orange-50 p-1.5 rounded border border-orange-100"><span className="font-bold text-orange-700">ملاحظات:</span> {c.notes}</p>
@@ -1420,6 +1586,9 @@ export default function App() {
               const sp = pendingList.filter(r => String(r.standId) === String(stand.id));
               const hasPending = sp.some(r => r.status === 'pending');
               const hasRejected = sp.some(r => r.status === 'rejected');
+              const currentShiftKey = `${currentDateStr}__${selectedShift}`;
+              const preDeductedBillets = Number((stand.preCountedShifts || {})[currentShiftKey] || 0);
+
               return (
                 <div key={stand.id} onClick={() => openStandRollPage(idx)}
                   className={`min-h-[155px] sm:min-h-[168px] rounded-xl flex flex-col justify-between border-2 cursor-pointer ${stand.isActive ? status.bg : 'bg-slate-300 opacity-60'} ${status.border} p-2 relative overflow-hidden shadow-sm hover:shadow-md hover:scale-[1.01] transition-all`}>
@@ -1443,6 +1612,12 @@ export default function App() {
                   {(hasPending || hasRejected) && (
                     <span className={`z-10 self-start text-[9px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 ${hasPending ? 'bg-amber-400 text-slate-950' : 'bg-red-600 text-white'}`}>
                       {hasPending ? <><Hourglass className="w-3 h-3" /> بانتظار المدير</> : <><XCircle className="w-3 h-3" /> طلب مرفوض</>}
+                    </span>
+                  )}
+
+                  {preDeductedBillets > 0 && (
+                    <span className="z-10 self-start text-[8px] font-bold bg-blue-100 text-blue-800 border border-blue-300 px-1.5 py-0.5 rounded">
+                      يُخصم {preDeductedBillets} بليت عند تقفيل الوردية
                     </span>
                   )}
 
