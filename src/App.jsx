@@ -5,7 +5,7 @@ import {
   Sliders, Trash2, Clock, Settings, X, UploadCloud, History,
   ShieldAlert, Key, Eye, Layers, Wrench, ArrowLeftRight,
   FileSpreadsheet, FileText, Inbox, Check, XCircle, Hourglass,
-  ChevronDown, ChevronUp, Plus
+  ChevronDown, ChevronUp, Plus, Code2, Sparkles, Award
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
@@ -138,7 +138,6 @@ const normalizeList = (raw) => {
     return normalizeStand(s, cfg);
   });
 
-  // إذا كانت القائمة قديمة (أقل من 12) نكملها للـ 12 الأساسية
   if (normalized.length < 12) {
     DEFAULT_STANDS_CONFIG.forEach(cfg => {
       if (!normalized.some(s => String(s.id) === cfg.id)) {
@@ -217,6 +216,7 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
   td{padding:5px;border:1px solid #cbd5e1;text-align:center}
   tr:nth-child(even) td{background:#f1f5f9}
   .tot td{font-weight:bold;background:#dbeafe!important}
+  .dev-footer{margin-top:18px;padding-top:8px;border-top:2px solid #cbd5e1;text-align:center;font-size:11px;color:#475569;font-weight:bold}
   @media print{ body{padding:0} h2{break-after:avoid} tr{break-inside:avoid} }
 </style></head><body>
 <h1>شركة الجيوشي للصلب - تقرير تتبع الدرافيل والممرات</h1>
@@ -228,6 +228,7 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
 <tr class="tot"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
 <table>${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
+<div class="dev-footer">Designed &amp; Engineered by Bassam Waleed — النظام الذكي لتتبع الدرافيل والممرات</div>
 </body></html>`;
 };
 
@@ -416,6 +417,9 @@ export default function App() {
   const [userAuth, setUserAuth] = useState(null);
   const appId = 'al-gioshy-steel-rolls';
 
+  // نافذة بطاقة مصمم ومطور الموقع (Bassam Waleed)
+  const [devModalOpen, setDevModalOpen] = useState(false);
+
   // الصلاحيات
   const isManagerLike = currentUser === 'manager' || currentUser === 'admin' || currentUser === 'engineer';
   const canManageUsers = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
@@ -426,7 +430,6 @@ export default function App() {
     ? `${loggedUserInfo.roleTitle}: ${loggedUserInfo.name}`
     : (ROLE_TITLES[currentUser] || 'مستخدم');
 
-  // حالة فتح/طي شريط أدوات المدير والتقارير لتوفير مساحة الشاشة
   const [isManagerToolbarOpen, setIsManagerToolbarOpen] = useState(false);
 
   const secretTapCount = useRef(0);
@@ -1115,6 +1118,52 @@ export default function App() {
   const pendingCount = pendingList.filter(r => r.status === 'pending').length;
 
   /* ======================================================
+    نافذة بطاقة مصمم ومطور النظام (Bassam Waleed)
+    ====================================================== */
+  const developerCardModalJSX = devModalOpen && (
+    <Overlay z={110}>
+      <div className="bg-slate-900 border-2 border-amber-400/80 rounded-2xl max-w-sm w-full p-6 text-white shadow-[0_0_40px_rgba(245,158,11,0.25)] relative overflow-hidden text-center">
+        <div className="absolute -top-12 -right-12 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute -bottom-12 -left-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+
+        <button
+          onClick={() => setDevModalOpen(false)}
+          className="absolute top-3 left-3 text-slate-400 hover:text-white bg-slate-800 p-1.5 rounded-lg"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg text-slate-950">
+          <Award className="w-9 h-9" />
+        </div>
+
+        <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full text-[10px] font-black bg-amber-400/15 text-amber-300 border border-amber-400/30 mb-2">
+          <Sparkles className="w-3 h-3" /> System Architect &amp; Developer
+        </span>
+
+        <h3 className="text-2xl font-black tracking-wide bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-200 bg-clip-text text-transparent" dir="ltr">
+          Eng. Bassam Waleed
+        </h3>
+        <p className="text-xs font-bold text-slate-300 mt-1">بسام وليد — مصمم ومطور النظام</p>
+
+        <div className="mt-4 bg-slate-800/90 border border-slate-700 rounded-xl p-3 text-[11px] text-slate-300 leading-relaxed font-bold space-y-1">
+          <p className="text-amber-300">النظام الذكي لتتبع الدرافيل والممرات والإنتاجية</p>
+          <p className="text-[10px] text-slate-400 font-normal">
+            تم التصميم والبرمجة خصيصاً لإدارة خطوط الدرفلة وحساب أعمار الممرات والأطنان بدقة لحظية.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setDevModalOpen(false)}
+          className="mt-5 w-full bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black py-2 rounded-xl text-xs shadow-md transition-all"
+        >
+          إغلاق
+        </button>
+      </div>
+    </Overlay>
+  );
+
+  /* ======================================================
     الواجهة: صيانة + دخول
     ====================================================== */
   if (adminState.isMaintenance && !isSuperAdmin && currentUser !== 'none') {
@@ -1156,7 +1205,8 @@ export default function App() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4 select-none" dir="rtl">
         {loginModalJSX}
-        <div className="bg-slate-800 p-8 rounded-xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
+        {developerCardModalJSX}
+        <div className="bg-slate-800 p-8 rounded-2xl max-w-sm w-full text-center border border-slate-700 shadow-2xl relative">
           <div onClick={handleSecretAdminTrigger} className="cursor-pointer inline-block w-full">
             {customLogo ? (
               <div className="w-full flex justify-center mb-6 bg-white p-2 rounded-lg shadow-sm">
@@ -1187,6 +1237,24 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* توقيع مصمم الموقع في شاشة الدخول */}
+          <div className="mt-7 pt-4 border-t border-slate-700/80">
+            <button
+              type="button"
+              onClick={() => setDevModalOpen(true)}
+              className="group w-full bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 hover:from-slate-800 hover:to-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-xl px-3 py-2 flex items-center justify-center gap-2 shadow-md transition-all"
+            >
+              <Code2 className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform shrink-0" />
+              <div className="flex flex-col items-center leading-tight">
+                <span className="text-[9px] text-slate-400 font-bold">تم تصميم وتطوير النظام بواسطة</span>
+                <span className="text-xs font-black tracking-wider bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
+                  Bassam Waleed
+                </span>
+              </div>
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1239,6 +1307,7 @@ export default function App() {
       )}
 
       {loginModalJSX}
+      {developerCardModalJSX}
 
       {/* ===== نافذة إضافة ستاند جديد (للمدير فقط) ===== */}
       {addStandModalOpen && canAddStand && (
@@ -1966,11 +2035,10 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== الشريط العلوي المنسق (بدون أي تداخل مع الساعة) ===== */}
+      {/* ===== الشريط العلوي المنسق ===== */}
       <nav className="bg-slate-900 text-white p-2 rounded-lg flex flex-col gap-2 flex-none shadow-sm select-none">
         <div className="flex flex-wrap items-center justify-between gap-2">
           
-          {/* القسم الأيمن: اللوجو وعنوان الموقع + الساعة */}
           <div className="flex items-center gap-2 shrink-0">
             <div onClick={handleSecretAdminTrigger} className="flex items-center gap-2 cursor-pointer">
               {customLogo ? (
@@ -1987,7 +2055,6 @@ export default function App() {
             <LiveClock />
           </div>
 
-          {/* القسم الأيسر: أيقونات التحكم + اسم المستخدم + خروج */}
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {isManagerLike && (
               <button
@@ -2051,7 +2118,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* الصف الثاني: التبويبات + مقاس المنتج */}
         <div className="flex flex-col sm:flex-row gap-2 bg-slate-800 p-1.5 rounded-lg justify-between items-center">
           <div className="flex gap-1.5 w-full sm:w-auto overflow-x-auto">
             {[['dashboard', 'التشغيل والممرات', TrendingUp], ['analytics', 'الإحصائيات', BarChart3], ['archive', 'الأرشيف', Archive]].map(([k, label, Icon]) => (
@@ -2140,10 +2206,8 @@ export default function App() {
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-2 flex-1 overflow-hidden p-1">
 
-          {/* ===== شريط أدوات المدير والمهندس القابل للطي والفتح (يوفر مساحة كبيرة) ===== */}
           {isManagerLike && (
             <div className="flex flex-col flex-none bg-white rounded-lg border border-slate-300 shadow-sm overflow-hidden">
-              {/* الشريط المدمج الدائم */}
               <div
                 onClick={() => setIsManagerToolbarOpen(!isManagerToolbarOpen)}
                 className="p-2 flex flex-wrap items-center justify-between gap-2 cursor-pointer hover:bg-slate-50 transition-colors select-none"
@@ -2173,7 +2237,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* الجزء القابل للطي والفتح */}
               {isManagerToolbarOpen && (
                 <div className="px-2.5 pb-2.5 pt-2 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -2421,6 +2484,26 @@ export default function App() {
           )}
         </div>
       )}
+
+      {/* ===== شريط التوقيع السفلي الثابت لمصمم ومطور الموقع (Bassam Waleed) ===== */}
+      <footer className="bg-slate-900 text-white px-3 py-1 rounded-lg flex items-center justify-between flex-none border border-slate-800 shadow-sm select-none">
+        <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold hidden sm:inline">
+          نظام تتبع الدرافيل والممرات — الجيوشي للصلب
+        </span>
+        <button
+          type="button"
+          onClick={() => setDevModalOpen(true)}
+          className="mx-auto sm:mx-0 flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 px-2.5 py-0.5 rounded-full transition-all group"
+          title="عرض بطاقة مصمم ومطور النظام"
+        >
+          <Code2 className="w-3 h-3 text-amber-400 group-hover:scale-110 transition-transform" />
+          <span className="text-[9px] text-slate-300 font-bold">تطوير وتصميم:</span>
+          <span className="text-[10px] sm:text-[11px] font-black tracking-wide bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
+            Bassam Waleed
+          </span>
+          <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+        </button>
+      </footer>
     </div>
   );
 }
