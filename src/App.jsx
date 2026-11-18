@@ -14,7 +14,7 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, setDoc, getDoc, deleteDoc, writeBatch, onSnapshot, increment
+  doc, collection, query, orderBy, limit, setDoc, getDoc, deleteDoc, writeBatch, onSnapshot, increment
 } from 'firebase/firestore';
 
 /* ======================================================
@@ -481,6 +481,26 @@ const WeightControl = ({ value, onCommit }) => {
   );
 };
 
+/* نسبة تنبيه الممرات (للأدمن): 50 إلى 100 */
+const PercentControl = ({ value, onCommit }) => {
+  const [draft, setDraft] = React.useState(String(value));
+  React.useEffect(() => { setDraft(String(value)); }, [value]);
+  const commit = () => {
+    const v = Math.round(Number(draft));
+    if (v >= 50 && v <= 100) { if (v !== Number(value)) onCommit(v); setDraft(String(v)); }
+    else setDraft(String(value));
+  };
+  return (
+    <input
+      type="number" step="1" min="50" max="100" value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      className="w-20 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-white outline-none focus:border-blue-500"
+    />
+  );
+};
+
 /* توقيع فريق التطوير (شاشة الدخول + الشريط السفلي) */
 const Credits = ({ onClick, compact = false }) => (
   <button
@@ -523,6 +543,7 @@ function App() {
   const canManageUsers = currentUser === 'admin' || isSuperAdmin;
   const canAddStand = currentUser === 'admin' || isSuperAdmin;
   const canApplyDirect = (standId) => isManagerLike || AUTO_APPLY_STANDS.includes(Number(standId));
+  const isAdminRole = currentUser === 'admin' || isSuperAdmin;
   const canRecordShift = currentUser === 'tech' || currentUser === 'engineer' || currentUser === 'admin';
 
   const roleLabel = loggedUserInfo.name
@@ -554,6 +575,10 @@ function App() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [billetWeight, setBilletWeight] = useState(0.75);
+  const [alertPercent, setAlertPercent] = useState(80);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityList, setActivityList] = useState([]);
+  const backupInputRef = useRef(null);
   const [selectedProductSize, setSelectedProductSize] = useState('16');
   const [customLogo, setCustomLogo] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -645,6 +670,7 @@ function App() {
         if (!snap.exists()) return;
         const d = snap.data();
         if (d.billetWeight) setBilletWeight(d.billetWeight);
+        if (d.alertPercent) setAlertPercent(d.alertPercent);
         if (d.logoUrl) setCustomLogo(d.logoUrl);
         if (d.selectedProductSize) setSelectedProductSize(d.selectedProductSize);
       }, listenerError('settings'))
@@ -673,6 +699,14 @@ function App() {
     }, listenerError('visits'));
     return () => unsub();
   }, [userAuth, currentUser, isSuperAdmin]);
+
+  // سجل النشاط (للأدمن فقط، وبيتحمل لما يتفتح بس)
+  useEffect(() => {
+    if (!activityOpen || !userAuth || !db || !(currentUser === 'admin' || isSuperAdmin)) return;
+    const q = query(collection(db, 'factory', appId, 'activity'), orderBy('ts', 'desc'), limit(200));
+    const unsub = onSnapshot(q, (snap) => setActivityList(snap.docs.map(d => d.data())), listenerError('activity'));
+    return () => unsub();
+  }, [activityOpen, userAuth, currentUser, isSuperAdmin]);
 
   // أول تشغيل: المدير/الأدمن بيزرع الستاندات الافتراضية لو قاعدة البيانات فاضية فعلاً (مؤكد من السيرفر)
   useEffect(() => {
@@ -730,7 +764,7 @@ function App() {
   };
 
   /* ---------- الحفظ السحابي ---------- */
-  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending } = {}) => {
+  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending, alertPct, label } = {}) => {
     if (userAuth && db) {
       try {
         // بنكتب بس السجلات اللي اتغيرت/اتضافت/اتمسحت (كل سجل document مستقل)
@@ -753,6 +787,71 @@ function App() {
         if (archive !== undefined) sync('archive', archive, productionArchive);
         if (changes !== undefined) sync('passChanges', changes, passChanges);
         if (pending !== undefined) sync('pending', pending, pendingList);
+        // سجل النشاط: بيتكتب مع نفس العملية
+        const logs = [];
+        const addLog = (action, details = '') => logs.push({ action, details });
+        if (label) {
+          addLog(label);
+        } else {
+          if (s !== undefined) {
+            const oldMap = new Map(stands.map(x => [String(x.id), x]));
+            const changedS = s.filter(n => { const o = oldMap.get(String(n.id)); return !o || JSON.stringify(o) !== JSON.stringify(n); });
+            const newIds = new Set(s.map(n => String(n.id)));
+            const removedS = stands.filter(o => !newIds.has(String(o.id)));
+            if (changedS.length) addLog('تعديل ستاندات', changedS.slice(0, 6).map(x => x.name).join('، ') + (changedS.length > 6 ? ` و${changedS.length - 6} آخرين` : ''));
+            if (removedS.length) addLog('حذف ستاند', removedS.map(x => x.name).join('، '));
+          }
+          if (archive !== undefined) {
+            const oldA = new Map(productionArchive.map(x => [String(x.id), x]));
+            const desc = (x) => `${x.date} - ${x.shift}: ${x.billets} بليت (${Number(x.tons).toFixed(1)} طن)`;
+            archive.forEach(x => {
+              const o = oldA.get(String(x.id));
+              if (!o) addLog('تسجيل إنتاج وردية', desc(x));
+              else if (JSON.stringify(o) !== JSON.stringify(x)) addLog('تعديل إنتاج وردية', desc(x));
+            });
+            const aIds = new Set(archive.map(x => String(x.id)));
+            const removedA = productionArchive.filter(x => !aIds.has(String(x.id)));
+            if (removedA.length) addLog('حذف سجلات إنتاج', `${removedA.length} سجل`);
+          }
+          if (changes !== undefined) {
+            const oldC = new Map(passChanges.map(x => [String(x.id), x]));
+            changes.forEach(x => {
+              const o = oldC.get(String(x.id));
+              const what = x.kind === 'newRoll' ? 'درفيل جديد' : `ممر ${x.fromPass} ← ممر ${x.toPass}`;
+              if (!o) addLog(x.autoApplied ? 'تغيير مباشر (ستاند 8-12)' : (x.kind === 'newRoll' ? 'تركيب درفيل جديد' : 'تغيير ممر'), `${x.standName}: ${what}`);
+              else if (o.needsReview && !x.needsReview) addLog('تأكيد تغيير', `${x.standName}: ${what}`);
+            });
+          }
+          if (pending !== undefined) {
+            const oldP = new Map(pendingList.map(x => [String(x.id), x]));
+            pending.forEach(x => {
+              const o = oldP.get(String(x.id));
+              if (!o) addLog('طلب جديد', `${x.standName}: ${x.kind === 'newRoll' ? 'تركيب درفيل' : `ممر ${x.fromPass} ← ممر ${x.targetPass}`}`);
+              else if (o.status === 'pending' && x.status === 'rejected') addLog('رفض طلب', x.standName);
+            });
+          }
+          if (weight !== undefined) addLog('تغيير وزن البليت', `${weight} طن`);
+          if (productSize !== undefined) addLog('تغيير مقاس المنتج', String(productSize));
+          if (logo !== undefined) addLog('تغيير شعار الموقع');
+          if (alertPct !== undefined) addLog('تغيير نسبة تنبيه الممرات', `${alertPct}%`);
+          if (admin !== undefined && admin.isMaintenance !== undefined && !!admin.isMaintenance !== !!adminState.isMaintenance) {
+            addLog(admin.isMaintenance ? 'تفعيل وضع الصيانة' : 'إيقاف وضع الصيانة');
+          }
+        }
+        const baseId = Date.now() * 10;
+        logs.slice(0, 40).forEach((lg, i) => {
+          const id = baseId + i;
+          ops.push({
+            type: 'set',
+            ref: doc(db, 'factory', appId, 'activity', String(id)),
+            data: {
+              id, ts: Date.now(), at: new Date().toLocaleString('ar-EG'), uid: userAuth.uid,
+              user: roleLabel, role: isSuperAdmin ? 'admin' : currentUser,
+              action: lg.action, details: String(lg.details || '').slice(0, 500)
+            }
+          });
+        });
+
         for (let i = 0; i < ops.length; i += 400) {
           const batch = writeBatch(db);
           ops.slice(i, i + 400).forEach(op => (op.type === 'delete' ? batch.delete(op.ref) : batch.set(op.ref, op.data)));
@@ -762,6 +861,7 @@ function App() {
         if (weight !== undefined) upd.billetWeight = weight;
         if (logo !== undefined) upd.logoUrl = logo;
         if (productSize !== undefined) upd.selectedProductSize = productSize;
+        if (alertPct !== undefined) upd.alertPercent = alertPct;
         if (Object.keys(upd).length) await setDoc(doc(db, 'factory', appId, 'settings', 'main'), upd, { merge: true });
         if (admin !== undefined) {
           const pub = {};
@@ -784,8 +884,19 @@ function App() {
       if (changes !== undefined) setPassChanges(changes);
       if (pending !== undefined) setPendingList(pending);
       if (productSize !== undefined) setSelectedProductSize(productSize);
+      if (alertPct !== undefined) setAlertPercent(alertPct);
       if (admin !== undefined) setAdminState(prev => ({ ...prev, ...admin }));
     }
+  };
+
+  // تسجيل حدث منفرد في سجل النشاط (دخول، حسابات...)
+  const logActivity = (action, details = '', who = roleLabel, roleKey = (isSuperAdmin ? 'admin' : currentUser)) => {
+    if (!db || !auth || !auth.currentUser) return;
+    const id = Date.now() * 10 + Math.floor(Math.random() * 10);
+    setDoc(doc(db, 'factory', appId, 'activity', String(id)), {
+      id, ts: Date.now(), at: new Date().toLocaleString('ar-EG'), uid: auth.currentUser.uid,
+      user: who, role: roleKey, action, details: String(details).slice(0, 500)
+    }).catch(e => console.error('activity log:', e));
   };
 
   /* ---------- إضافة وحذف ستاندات جديدة (للمدير فقط) ---------- */
@@ -884,6 +995,7 @@ function App() {
         createdBy: roleLabel
       });
       await signOut(sAuth);
+      logActivity('إضافة فرد', `${cleanName} (${ROLE_TITLES[newStaffForm.role] || 'فني'})`);
       setNewStaffForm({ name: '', code: '', role: 'tech' });
     } catch (err) {
       console.error(err);
@@ -897,7 +1009,9 @@ function App() {
 
   const handleDeleteStaffMember = async (id) => {
     try {
+      const member = staffAccounts.find(u => u.id === id);
       await deleteDoc(doc(db, 'users', id));
+      logActivity('حذف فرد', member ? `${member.name} (${member.roleTitle || ''})` : '');
     } catch (err) {
       console.error(err);
       showAlert('تعذر الحذف', 'مقدرناش نحذف الحساب. جرب تاني.');
@@ -1139,14 +1253,16 @@ function App() {
   };
 
   const handleResetAllStands = () => {
+    if (!isAdminRole) return;
     showConfirm('تحذير شديد', 'هل أنت متأكد من تصفير كافة الستاندات والممرات بالكامل والبدء من ممر 1؟', () => {
       const today = new Date().toLocaleDateString('en-GB');
-      save({ stands: stands.map(s => ({ ...s, activePass: 1, accumulatedTons: 0, lastResetDate: today, preCountedShifts: {}, passes: createPassesArray(s.totalPasses, 1, 0) })) });
+      save({ stands: stands.map(s => ({ ...s, activePass: 1, accumulatedTons: 0, lastResetDate: today, preCountedShifts: {}, passes: createPassesArray(s.totalPasses, 1, 0) })), label: 'تصفير كل الستاندات' });
     });
   };
   const handleClearArchive = () => {
+    if (!isAdminRole) return;
     showConfirm('تحذير نهائي', 'هل أنت متأكد من مسح جميع بيانات الأرشيف القديمة وسجل الممرات بالكامل والبدء من جديد؟', () => {
-      save({ archive: [], changes: [] });
+      save({ archive: [], changes: [], label: `مسح الأرشيف وسجل التغييرات (${productionArchive.length} سجل)` });
       showAlert('تمت العملية', 'تم مسح الأرشيف وسجل الممرات بنجاح.');
     });
   };
@@ -1155,6 +1271,64 @@ function App() {
     if (val > 0) save({ stands: stands.map((s, i) => i === index ? { ...s, maxLimit: val } : s) });
   };
   const handleWeightChange = (v) => { const val = Number(v); if (val >= 0.1 && val <= 5) save({ weight: val }); };
+  const handleAlertPercentChange = (v) => { const n = Math.round(Number(v)); if (n >= 50 && n <= 100) save({ alertPct: n }); };
+
+  /* ---------- النسخ الاحتياطي (للأدمن) ---------- */
+  const handleBackupDownload = () => {
+    if (!isAdminRole) return;
+    const data = {
+      format: 'gioshy-backup-v1', exportedAt: new Date().toISOString(),
+      billetWeight, selectedProductSize, alertPercent,
+      stands, archive: productionArchive, passChanges, pending: pendingList
+    };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gioshy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    logActivity('تنزيل نسخة احتياطية', `${productionArchive.length} سجل إنتاج، ${stands.length} ستاند`);
+  };
+  const handleBackupFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file || !isAdminRole) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (d.format !== 'gioshy-backup-v1' || !Array.isArray(d.stands) || !Array.isArray(d.archive) || !Array.isArray(d.passChanges) || !Array.isArray(d.pending)) throw new Error('bad');
+        const w = Number(d.billetWeight);
+        showConfirm('استعادة نسخة احتياطية', `هتتبدل كل البيانات الحالية بمحتوى الملف (${d.stands.length} ستاند، ${d.archive.length} سجل إنتاج، نسخة بتاريخ ${d.exportedAt ? new Date(d.exportedAt).toLocaleDateString('ar-EG') : 'غير معروف'}). نزّل نسخة من الحالي الأول لو محتاجها. متأكد؟`, () => {
+          save({
+            stands: d.stands, archive: d.archive, changes: d.passChanges, pending: d.pending,
+            weight: w >= 0.1 && w <= 5 ? w : undefined,
+            label: 'استعادة نسخة احتياطية'
+          });
+        });
+      } catch (err) {
+        showAlert('ملف غير صالح', 'الملف ده مش نسخة احتياطية من الموقع.');
+      }
+    };
+    reader.readAsText(file);
+  };
+  const handleClearActivity = () => {
+    showConfirm('مسح سجل النشاط', 'هتمسح كل السجل الظاهر. متأكد؟', async () => {
+      try {
+        for (let i = 0; i < activityList.length; i += 400) {
+          const b = writeBatch(db);
+          activityList.slice(i, i + 400).forEach(a => b.delete(doc(db, 'factory', appId, 'activity', String(a.id))));
+          await b.commit();
+        }
+      } catch (err) {
+        console.error(err);
+        showAlert('تعذر المسح', 'حصلت مشكلة. جرب تاني.');
+      }
+    });
+  };
 
   /* ---------- إنتاج الوردية ---------- */
   const currentDateStr = currentProdDate.toLocaleDateString('en-GB');
@@ -1276,6 +1450,7 @@ function App() {
       if (adminState.isMaintenance && u.role !== 'admin') { await signOut(auth); setErr('الموقع في وضع الصيانة والتحديث حالياً!'); return; }
 
       writeGuard({ fails: 0, until: 0 });
+      logActivity('تسجيل دخول', '', u.role === 'admin' ? 'مسؤول النظام' : (u.name || ''), u.role);
       const isAdminUser = u.role === 'admin';
       setIsSuperAdmin(isAdminUser);
       setLoggedUserInfo({
@@ -1525,6 +1700,7 @@ function App() {
   const greenCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length;
   const warnCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length;
   const dangerCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length;
+  const alertStands = stands.filter(s => s.maxLimit > 0 && (s.accumulatedTons / s.maxLimit) * 100 >= alertPercent);
 
   /* ======================================================
     الواجهة الرئيسية
@@ -1552,7 +1728,6 @@ function App() {
       )}
 
       {loginModalJSX}
-      {developerCardModalJSX}
 
       {/* ===== نافذة إضافة ستاند جديد (للمدير فقط) ===== */}
       {addStandModalOpen && canAddStand && (
@@ -2244,6 +2419,36 @@ function App() {
         </Overlay>
       )}
 
+      {activityOpen && isAdminRole && (
+        <Overlay z={90}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 p-3 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-bold text-sm flex items-center gap-2"><History className="w-4 h-4 text-amber-400" /> سجل النشاط (آخر {activityList.length})</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={handleClearActivity} className="text-[10px] bg-red-600 hover:bg-red-700 px-2 py-1 rounded font-bold">مسح السجل</button>
+                <button onClick={() => setActivityOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            <div className="p-3 overflow-y-auto flex flex-col gap-1.5 bg-slate-50">
+              {activityList.length === 0 && <div className="text-center py-10 text-slate-400 font-bold text-sm">مفيش نشاط مسجل لسه.</div>}
+              {activityList.map(a => (
+                <div key={a.id} className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px]">
+                  <div className="flex justify-between gap-2 flex-wrap">
+                    <span className="font-black text-slate-900">{a.action}</span>
+                    <span className="text-[10px] text-slate-500 font-bold">{a.at}</span>
+                  </div>
+                  <div className="text-slate-600 font-bold">
+                    <span className="text-blue-700">{a.user}</span>{' '}
+                    <span className="text-[10px] text-slate-400">({ROLE_TITLES[a.role] || a.role})</span>
+                    {a.details ? <span> — {a.details}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Overlay>
+      )}
+
       {/* ===== سجل الستاند ===== */}
       {historyModal.isOpen && (
         <Overlay z={80}>
@@ -2376,7 +2581,7 @@ function App() {
               </button>
             )}
 
-            {(isManagerLike || isSuperAdmin) && (
+            {isAdminRole && (
               <button
                 onClick={openSettingsModal}
                 className="bg-slate-800 hover:bg-slate-700 border border-slate-700 p-1.5 rounded-md shadow-sm transition-colors"
@@ -2468,6 +2673,22 @@ function App() {
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
+            <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Archive className="w-4 h-4 text-emerald-600" /> النسخ الاحتياطي وسجل النشاط</h3>
+            <p className="text-xs text-slate-500">نزّل نسخة كاملة من البيانات على جهازك بشكل دوري. الاستعادة بتبدّل كل البيانات الحالية بمحتوى الملف.</p>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={handleBackupDownload} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-xs shadow">تنزيل نسخة كاملة</button>
+              <button onClick={() => backupInputRef.current && backupInputRef.current.click()} className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold px-4 py-2 rounded-lg text-xs shadow">استعادة من ملف</button>
+              <button onClick={() => setActivityOpen(true)} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-lg text-xs shadow">سجل النشاط</button>
+              <input ref={backupInputRef} type="file" accept="application/json,.json" onChange={handleBackupFile} className="hidden" />
+            </div>
+            <div className="flex items-center gap-2 border-t border-slate-200 pt-3 flex-wrap">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              <span className="text-xs font-bold text-slate-700">نسبة تنبيه الممرات (%):</span>
+              <PercentControl value={alertPercent} onCommit={handleAlertPercentChange} />
+              <span className="text-[10px] text-slate-500 font-bold">بيظهر تنبيه لكل الأدوار لما أي ستاند يوصل النسبة دي (من 50 إلى 100).</span>
+            </div>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
             <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Key className="w-4 h-4 text-blue-600" /> تغيير كلمة مرور الأدمن</h3>
             <p className="text-xs text-slate-500">أكواد الفنيين والمهندسين والمدراء بتتعمل من قسم الأفراد، وبتتخزن مشفّرة ومش بتظهر لحد.</p>
             <div className="flex gap-2">
@@ -2490,6 +2711,21 @@ function App() {
             </div>
             <span className="text-[10px] text-slate-500 font-bold hidden sm:inline">بيتحسب عليه إنتاج كل الستاندات (من 0.1 إلى 5 طن)</span>
           </div>
+
+          {alertStands.length > 0 && (
+            <div className="flex-none bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-2.5 py-1.5 text-[11px] font-bold flex items-center gap-2 flex-wrap">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>تنبيه ممرات (+{alertPercent}%):</span>
+              {alertStands.map(s => {
+                const p = (s.accumulatedTons / s.maxLimit) * 100;
+                return (
+                  <span key={s.id} className={`px-1.5 py-0.5 rounded border font-black ${p >= 100 ? 'bg-red-100 text-red-800 border-red-300' : 'bg-yellow-100 text-yellow-800 border-yellow-300'}`}>
+                    {s.name} {p.toFixed(0)}%
+                  </span>
+                );
+              })}
+            </div>
+          )}
 
           {isManagerLike && (
             <div className="flex flex-col flex-none bg-white rounded-lg border border-slate-300 shadow-sm overflow-hidden">
@@ -2536,8 +2772,12 @@ function App() {
                       </button>
                     )}
                     {exportButtons}
+                    {canAddStand && (
+                      <>
                     <button onClick={handleResetAllStands} className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><RefreshCw className="w-3 h-3" /> تصفير كل الستاندات</button>
                     <button onClick={handleClearArchive} className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95"><Trash2 className="w-3 h-3" /> مسح الأرشيف</button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -2758,16 +2998,6 @@ function App() {
           )}
         </div>
       )}
-
-      {/* ===== شريط التوقيع السفلي الثابت (فكرة وإشراف م. حسين عبدالله | تصميم وتطوير Bassam Waleed) ===== */}
-      <footer className="bg-slate-900 text-white px-3 py-1.5 rounded-lg flex items-center justify-between gap-2 flex-none border border-slate-800 shadow-sm select-none">
-        <span className="text-[10px] text-slate-400 font-bold hidden md:inline">
-          نظام تتبع الدرافيل والممرات — الجيوشي للصلب
-        </span>
-        <div className="mx-auto md:mx-0">
-          <Credits compact onClick={() => setDevModalOpen(true)} />
-        </div>
-      </footer>
     </div>
   );
 }
