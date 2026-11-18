@@ -7,9 +7,15 @@ import {
   FileSpreadsheet, FileText, Inbox, Check, XCircle, Hourglass,
   ChevronDown, ChevronUp, Plus, Code2, Sparkles, Award
 } from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { initializeApp, deleteApp } from 'firebase/app';
+import {
+  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  signOut, updatePassword, onAuthStateChanged
+} from 'firebase/auth';
+import {
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  doc, collection, setDoc, getDoc, deleteDoc, writeBatch, onSnapshot, increment
+} from 'firebase/firestore';
 
 /* ======================================================
   1. إعدادات قاعدة البيانات (Firebase)
@@ -30,7 +36,15 @@ try {
   if (Object.keys(firebaseConfig).length > 0) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
-    db = getFirestore(app);
+    // تخزين محلي: الشغل ما بيضيعش لو النت قطع، ويتبعت لما يرجع
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+        ignoreUndefinedProperties: true
+      });
+    } catch (e) {
+      db = getFirestore(app);
+    }
   }
 } catch (error) {
   console.error("Firebase init error:", error);
@@ -183,7 +197,44 @@ const convertGBToISO = (gb) => {
 /* ======================================================
   التصدير (Excel / PDF) - للمدير فقط (بدون توقيع في الطباعة)
   ====================================================== */
-const esc = (s) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* حماية محاولات تسجيل الدخول (على مستوى المتصفح - بتبطّأ التخمين لكنها مش بديل عن Firebase Auth) */
+const GUARD_KEY = 'gioshy_login_guard';
+const readGuard = () => { try { return JSON.parse(localStorage.getItem(GUARD_KEY)) || { fails: 0, until: 0 }; } catch { return { fails: 0, until: 0 }; } };
+const writeGuard = (g) => { try { localStorage.setItem(GUARD_KEY, JSON.stringify(g)); } catch { /* ignore */ } };
+
+/* الأدمن له إيميل ثابت. باقي الأفراد إيميلهم بيتولّد من الكود (مشفّر)، والكود نفسه هو كلمة المرور */
+const ADMIN_EMAIL = 'admin@gioshy.local';
+const sha256Hex = async (s) => {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+};
+const staffEmailFor = async (code) => `s${(await sha256Hex('gioshy|' + code)).slice(0, 24)}@gioshy.local`;
+
+/* التحقق من صورة اللوجو: صور مسموحة فقط */
+const isValidLogo = (s) => /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s) || /^https:\/\/[^\s"'<>]+$/.test(s);
+
+/* شاشة بديلة بدل الشاشة البيضاء لو حصل خطأ غير متوقع */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error, info) { console.error('App crashed:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div dir="rtl" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a', color: '#fff', padding: 24, textAlign: 'center' }}>
+          <div>
+            <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>حصل خطأ غير متوقع</h2>
+            <p style={{ opacity: 0.8, marginBottom: 16 }}>بياناتك محفوظة. اضغط تحديث وكمل شغل.</p>
+            <button onClick={() => window.location.reload()} style={{ background: '#f59e0b', color: '#0f172a', fontWeight: 800, padding: '10px 20px', borderRadius: 8 }}>تحديث الصفحة</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
   const now = new Date().toLocaleString('ar-EG');
@@ -407,7 +458,7 @@ const Overlay = ({ z = 50, children }) => (
 /* ======================================================
   التطبيق الرئيسي
   ====================================================== */
-export default function App() {
+function App() {
   const [currentUser, setCurrentUser] = useState('none'); // 'none' | 'tech' | 'engineer' | 'manager' | 'admin'
   const [loggedUserInfo, setLoggedUserInfo] = useState({ name: '', roleTitle: '', code: '' });
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -471,7 +522,7 @@ export default function App() {
   const [adminState, setAdminState] = useState({
     isMaintenance: false,
     maintenanceMessage: 'الموقع مغلق حالياً لإجراء تحديثات وصيانة للنظام.. يرجى المحاولة لاحقاً.',
-    techCode: '1111', managerCode: '2222', adminCode: '9999', visitsCount: 0, lastVisit: ''
+    visitsCount: 0, lastVisit: ''
   });
   const [loginPrompt, setLoginPrompt] = useState({ isOpen: false, role: '', codeInput: '', error: '' });
   const [visitLogged, setVisitLogged] = useState(false);
@@ -502,63 +553,95 @@ export default function App() {
   const showConfirm = (title, message, onConfirm) => setModal({ isOpen: true, type: 'confirm', title, message, onConfirm });
 
   /* ---------- الاتصال وجلب البيانات ---------- */
+  const isLoggedIn = currentUser !== 'none';
+  const [standsEmpty, setStandsEmpty] = useState(false);
+  const listenerError = (label) => (e) => console.error(`Listener error (${label}):`, e);
+
+  // الحالة العامة (وضع الصيانة): متاحة قبل تسجيل الدخول
   useEffect(() => {
-    if (!auth) { setIsDataLoaded(true); return; }
-    signInAnonymously(auth).catch(e => console.error(e));
-    const unsub = onAuthStateChanged(auth, setUserAuth);
+    if (!db) { setIsDataLoaded(true); return; }
+    const unsub = onSnapshot(doc(db, 'config', 'public'), (snap) => {
+      if (snap.exists()) setAdminState(prev => ({ ...prev, ...snap.data() }));
+      setIsDataLoaded(true);
+    }, (e) => { console.error(e); setIsDataLoaded(true); });
     return () => unsub();
   }, []);
 
   useEffect(() => {
-    if (!userAuth || !db) return;
-    const ref = (name) => doc(db, 'factory', appId, 'data', name);
-    const standsRef = ref('standsState'), archiveRef = ref('archiveState'), passChangesRef = ref('passChangesState'),
-      settingsRef = ref('settingsState'), adminRef = ref('adminState'), pendingRef = ref('pendingState'), staffRef = ref('staffState');
+    if (!auth) return;
+    const unsub = onAuthStateChanged(auth, setUserAuth);
+    return () => unsub();
+  }, []);
 
-    const u1 = onSnapshot(standsRef, (snap) => {
-      if (snap.exists() && snap.data().standsList) setStands(normalizeList(snap.data().standsList));
-      else { const init = buildInitialStands(); setDoc(standsRef, { standsList: init }); setStands(init); }
-      setIsDataLoaded(true);
-    });
-    const u2 = onSnapshot(archiveRef, (snap) => {
-      if (snap.exists()) setProductionArchive(snap.data().archiveList || []); else setDoc(archiveRef, { archiveList: [] });
-    });
-    const u3 = onSnapshot(passChangesRef, (snap) => {
-      if (snap.exists()) setPassChanges(snap.data().passChangesList || []); else setDoc(passChangesRef, { passChangesList: [] });
-    });
-    const u4 = onSnapshot(settingsRef, (snap) => {
-      if (snap.exists()) {
+  // بيانات المصنع: كل سجل في document مستقل، وبتتحمل بعد تسجيل الدخول فقط
+  useEffect(() => {
+    if (!userAuth || !db || !isLoggedIn) return;
+    const col = (name) => collection(db, 'factory', appId, name);
+    const byIdDesc = (a, b) => Number(b.id) - Number(a.id);
+    const unsubs = [
+      onSnapshot(col('stands'), (snap) => {
+        if (snap.empty) {
+          if (!snap.metadata.fromCache) setStandsEmpty(true);
+          setStands(buildInitialStands());
+        } else {
+          setStandsEmpty(false);
+          setStands(normalizeList(snap.docs.map(d => d.data())));
+        }
+      }, listenerError('stands')),
+      onSnapshot(col('archive'), (snap) => setProductionArchive(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('archive')),
+      onSnapshot(col('passChanges'), (snap) => setPassChanges(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('passChanges')),
+      onSnapshot(col('pending'), (snap) => setPendingList(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('pending')),
+      onSnapshot(doc(db, 'factory', appId, 'settings', 'main'), (snap) => {
+        if (!snap.exists()) return;
         const d = snap.data();
         if (d.billetWeight) setBilletWeight(d.billetWeight);
         if (d.logoUrl) setCustomLogo(d.logoUrl);
         if (d.selectedProductSize) setSelectedProductSize(d.selectedProductSize);
-      } else setDoc(settingsRef, { billetWeight: 0.75, logoUrl: "", selectedProductSize: '16' }, { merge: true });
-    });
-    const u5 = onSnapshot(adminRef, (snap) => {
+      }, listenerError('settings'))
+    ];
+    return () => unsubs.forEach(u => u());
+  }, [userAuth, isLoggedIn]);
+
+  // قائمة الأفراد (للمدير والأدمن فقط)
+  useEffect(() => {
+    if (!userAuth || !db || !(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin)) return;
+    const unsub = onSnapshot(collection(db, 'users'), (snap) => {
+      setStaffAccounts(
+        snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(u => u.role !== 'admin')
+          .sort((a, b) => (b.createdTs || 0) - (a.createdTs || 0))
+      );
+    }, listenerError('users'));
+    return () => unsub();
+  }, [userAuth, currentUser, isSuperAdmin]);
+
+  // عدّاد الزيارات (يظهر للأدمن فقط)
+  useEffect(() => {
+    if (!userAuth || !db || !(currentUser === 'admin' || isSuperAdmin)) return;
+    const unsub = onSnapshot(doc(db, 'factory', appId, 'meta', 'visits'), (snap) => {
       if (snap.exists()) setAdminState(prev => ({ ...prev, ...snap.data() }));
-      else {
-        const def = { isMaintenance: false, maintenanceMessage: 'الموقع مغلق حالياً لإجراء تحديثات وصيانة للنظام.. يرجى المحاولة لاحقاً.',
-          techCode: '1111', managerCode: '2222', adminCode: '9999', visitsCount: 1, lastVisit: new Date().toLocaleString('ar-EG') };
-        setDoc(adminRef, def); setAdminState(def);
-      }
-    });
-    const u6 = onSnapshot(pendingRef, (snap) => {
-      if (snap.exists()) setPendingList(snap.data().pendingList || []); else setDoc(pendingRef, { pendingList: [] });
-    });
-    const u7 = onSnapshot(staffRef, (snap) => {
-      if (snap.exists()) setStaffAccounts(snap.data().staffList || []); else setDoc(staffRef, { staffList: [] });
-    });
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
-  }, [userAuth]);
+    }, listenerError('visits'));
+    return () => unsub();
+  }, [userAuth, currentUser, isSuperAdmin]);
+
+  // أول تشغيل: المدير/الأدمن بيزرع الستاندات الافتراضية لو قاعدة البيانات فاضية فعلاً (مؤكد من السيرفر)
+  useEffect(() => {
+    if (!standsEmpty || !db || !userAuth) return;
+    if (!(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin)) return;
+    const b = writeBatch(db);
+    buildInitialStands().forEach(s => b.set(doc(db, 'factory', appId, 'stands', String(s.id)), s));
+    b.commit().catch(e => console.error('Seed error:', e));
+    setStandsEmpty(false);
+  }, [standsEmpty, userAuth, currentUser, isSuperAdmin]);
 
   useEffect(() => {
-    if (isDataLoaded && userAuth && db && !visitLogged) {
+    if (userAuth && isLoggedIn && db && !visitLogged) {
       setVisitLogged(true);
-      setDoc(doc(db, 'factory', appId, 'data', 'adminState'),
-        { visitsCount: (adminState.visitsCount || 0) + 1, lastVisit: new Date().toLocaleString('ar-EG') },
+      setDoc(doc(db, 'factory', appId, 'meta', 'visits'),
+        { visitsCount: increment(1), lastVisit: new Date().toLocaleString('ar-EG') },
         { merge: true }).catch(e => console.error(e));
     }
-  }, [isDataLoaded, userAuth, visitLogged]);
+  }, [userAuth, isLoggedIn, visitLogged]);
 
   /* ---------- اليوم الإنتاجي والورديات ---------- */
   const getInitialProductionState = () => {
@@ -597,22 +680,52 @@ export default function App() {
   };
 
   /* ---------- الحفظ السحابي ---------- */
-  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending, staff } = {}) => {
+  const save = async ({ stands: s, archive, weight, logo, changes, productSize, admin, pending } = {}) => {
     if (userAuth && db) {
       try {
-        const ref = (name) => doc(db, 'factory', appId, 'data', name);
-        if (s !== undefined) await setDoc(ref('standsState'), { standsList: s });
-        if (archive !== undefined) await setDoc(ref('archiveState'), { archiveList: archive });
-        if (changes !== undefined) await setDoc(ref('passChangesState'), { passChangesList: changes });
-        if (pending !== undefined) await setDoc(ref('pendingState'), { pendingList: pending });
-        if (staff !== undefined) await setDoc(ref('staffState'), { staffList: staff });
-        if (admin !== undefined) await setDoc(ref('adminState'), admin, { merge: true });
+        // بنكتب بس السجلات اللي اتغيرت/اتضافت/اتمسحت (كل سجل document مستقل)
+        // فمفيش حد بيمسح شغل التاني، وحجم أي document يفضل صغير مهما كبر الأرشيف
+        const ops = [];
+        const sync = (colName, newList, oldList) => {
+          const oldMap = new Map(oldList.map(x => [String(x.id), x]));
+          const newMap = new Map(newList.map(x => [String(x.id), x]));
+          newMap.forEach((val, id) => {
+            const prev = oldMap.get(id);
+            if (!prev || JSON.stringify(prev) !== JSON.stringify(val)) {
+              ops.push({ type: 'set', ref: doc(db, 'factory', appId, colName, id), data: val });
+            }
+          });
+          oldMap.forEach((_, id) => {
+            if (!newMap.has(id)) ops.push({ type: 'delete', ref: doc(db, 'factory', appId, colName, id) });
+          });
+        };
+        if (s !== undefined) sync('stands', s, stands);
+        if (archive !== undefined) sync('archive', archive, productionArchive);
+        if (changes !== undefined) sync('passChanges', changes, passChanges);
+        if (pending !== undefined) sync('pending', pending, pendingList);
+        for (let i = 0; i < ops.length; i += 400) {
+          const batch = writeBatch(db);
+          ops.slice(i, i + 400).forEach(op => (op.type === 'delete' ? batch.delete(op.ref) : batch.set(op.ref, op.data)));
+          await batch.commit();
+        }
         const upd = {};
         if (weight !== undefined) upd.billetWeight = weight;
         if (logo !== undefined) upd.logoUrl = logo;
         if (productSize !== undefined) upd.selectedProductSize = productSize;
-        if (Object.keys(upd).length) await setDoc(ref('settingsState'), upd, { merge: true });
-      } catch (e) { console.error("Save error:", e); }
+        if (Object.keys(upd).length) await setDoc(doc(db, 'factory', appId, 'settings', 'main'), upd, { merge: true });
+        if (admin !== undefined) {
+          const pub = {};
+          if (admin.isMaintenance !== undefined) pub.isMaintenance = !!admin.isMaintenance;
+          if (admin.maintenanceMessage !== undefined) pub.maintenanceMessage = String(admin.maintenanceMessage);
+          await setDoc(doc(db, 'config', 'public'), pub, { merge: true });
+        }
+      } catch (e) {
+        console.error("Save error:", e);
+        const denied = e && e.code === 'permission-denied';
+        showAlert('لم يتم الحفظ', denied
+          ? 'مفيش صلاحية لحفظ التغيير ده. اتأكد من تسجيل الدخول.'
+          : 'حصلت مشكلة أثناء الحفظ. اتأكد من الاتصال بالإنترنت وجرب تاني، وما تعتمدش إن التسجيل اتحفظ.');
+      }
     } else {
       if (s !== undefined) setStands(s);
       if (archive !== undefined) setProductionArchive(archive);
@@ -620,7 +733,6 @@ export default function App() {
       if (logo !== undefined) setCustomLogo(logo);
       if (changes !== undefined) setPassChanges(changes);
       if (pending !== undefined) setPendingList(pending);
-      if (staff !== undefined) setStaffAccounts(staff);
       if (productSize !== undefined) setSelectedProductSize(productSize);
       if (admin !== undefined) setAdminState(prev => ({ ...prev, ...admin }));
     }
@@ -679,7 +791,7 @@ export default function App() {
   };
 
   /* ---------- إدارة أكواد الأفراد والمهندسين (للمدير) ---------- */
-  const handleAddStaffMember = (e) => {
+  const handleAddStaffMember = async (e) => {
     e.preventDefault();
     const cleanName = newStaffForm.name.trim();
     const cleanCode = newStaffForm.code.trim();
@@ -687,29 +799,59 @@ export default function App() {
       showAlert('بيانات ناقصة', 'يرجى كتابة اسم الفرد والكود الخاص به.');
       return;
     }
-    const codeExists = staffAccounts.some(u => u.code === cleanCode) ||
-      [adminState.techCode, adminState.managerCode, adminState.adminCode].includes(cleanCode);
-    if (codeExists) {
-      showAlert('كود مستخدم', 'هذا الكود مستخدم بالفعل، اختر كوداً آخر.');
+    if (cleanCode.length < 6) {
+      showAlert('كود ضعيف', 'الكود لازم يكون 6 حروف أو أرقام على الأقل.');
       return;
     }
-    const newMember = {
-      id: Date.now(),
-      name: cleanName,
-      code: cleanCode,
-      role: newStaffForm.role,
-      roleTitle: ROLE_TITLES[newStaffForm.role] || 'فني',
-      createdAt: new Date().toLocaleDateString('en-GB'),
-      createdBy: roleLabel
-    };
-    const updated = [newMember, ...staffAccounts];
-    save({ staff: updated });
-    setNewStaffForm({ name: '', code: '', role: 'tech' });
+    if (!db || !userAuth) {
+      showAlert('غير متصل', 'لازم تكون متصل وداخل بحساب مدير لإنشاء الأكواد.');
+      return;
+    }
+    let secondary;
+    try {
+      const email = await staffEmailFor(cleanCode);
+      if (staffAccounts.some(u => u.emailKey === email)) {
+        showAlert('كود مستخدم', 'هذا الكود مستخدم بالفعل، اختر كوداً آخر.');
+        return;
+      }
+      // نسخة تانية من Firebase بنعمل بيها الحساب، عشان المدير ما يتسجلش خروج
+      secondary = initializeApp(firebaseConfig, 'staff-' + Date.now());
+      const sAuth = getAuth(secondary);
+      let cred;
+      try {
+        cred = await createUserWithEmailAndPassword(sAuth, email, cleanCode);
+      } catch (err) {
+        if (err.code === 'auth/email-already-in-use') cred = await signInWithEmailAndPassword(sAuth, email, cleanCode);
+        else throw err;
+      }
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        name: cleanName,
+        role: newStaffForm.role,
+        roleTitle: ROLE_TITLES[newStaffForm.role] || 'فني',
+        emailKey: email,
+        createdAt: new Date().toLocaleDateString('en-GB'),
+        createdTs: Date.now(),
+        createdBy: roleLabel
+      });
+      await signOut(sAuth);
+      setNewStaffForm({ name: '', code: '', role: 'tech' });
+    } catch (err) {
+      console.error(err);
+      showAlert('تعذر الإنشاء', err && err.code === 'permission-denied'
+        ? 'مفيش صلاحية لإنشاء هذا الحساب.'
+        : 'حصلت مشكلة أثناء إنشاء الحساب. اتأكد من الاتصال وإن تسجيل الدخول بالإيميل مفعّل في Firebase.');
+    } finally {
+      if (secondary) deleteApp(secondary).catch(() => {});
+    }
   };
 
-  const handleDeleteStaffMember = (id) => {
-    const updated = staffAccounts.filter(u => u.id !== id);
-    save({ staff: updated });
+  const handleDeleteStaffMember = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'users', id));
+    } catch (err) {
+      console.error(err);
+      showAlert('تعذر الحذف', 'مقدرناش نحذف الحساب. جرب تاني.');
+    }
   };
 
   const handleProductSizeChange = (size) => {
@@ -728,13 +870,17 @@ export default function App() {
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 1024 * 1024) { showAlert("خطأ", "حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 1 ميجابايت."); return; }
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { showAlert("خطأ", "الصيغة مش مدعومة. استخدم PNG أو JPG أو WEBP."); return; }
+    if (file.size > 400 * 1024) { showAlert("خطأ", "حجم الصورة كبير جداً. يرجى اختيار صورة أقل من 400 كيلوبايت."); return; }
     const reader = new FileReader();
     reader.onloadend = () => setTempLogoUrl(reader.result);
     reader.readAsDataURL(file);
   };
   const handleSaveSettings = () => {
-    if (tempLogoUrl && tempLogoUrl.trim() !== '') save({ logo: tempLogoUrl.trim() });
+    if (tempLogoUrl && tempLogoUrl.trim() !== '') {
+      if (!isValidLogo(tempLogoUrl.trim())) { showAlert("خطأ", "اللوجو غير صالح. ارفع صورة PNG/JPG/WEBP."); return; }
+      save({ logo: tempLogoUrl.trim() });
+    }
     setIsSettingsOpen(false);
   };
 
@@ -1016,60 +1162,65 @@ export default function App() {
   const openLoginModal = (role) => setLoginPrompt({ isOpen: true, role, codeInput: '', error: '' });
   const closeLogin = () => setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
 
-  const handleVerifyAccessCode = (e) => {
+  const loginBusyRef = useRef(false);
+  const handleVerifyAccessCode = async (e) => {
     e.preventDefault();
+    if (loginBusyRef.current) return;
     const { role, codeInput } = loginPrompt;
     const code = codeInput.trim();
+    if (!code) return;
+    const setErr = (msg) => setLoginPrompt(p => ({ ...p, error: msg }));
 
-    if (code === adminState.adminCode) {
-      setIsSuperAdmin(true);
-      setLoggedUserInfo({ name: 'مسؤول النظام', roleTitle: 'أدمن', code });
-      setCurrentUser(role === 'admin' ? 'admin' : role);
-      setActiveTab(role === 'admin' ? 'admin' : 'dashboard');
-      closeLogin();
+    const guard = readGuard();
+    if (Date.now() < guard.until) {
+      setErr(`محاولات خاطئة كتير. استنى ${Math.ceil((guard.until - Date.now()) / 1000)} ثانية وجرب تاني.`);
       return;
     }
+    if (!auth || !db) { setErr('مفيش اتصال بقاعدة البيانات.'); return; }
 
-    const matchedStaff = staffAccounts.find(u => u.code === code);
-    if (matchedStaff) {
-      if (adminState.isMaintenance) {
-        setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
-        return;
+    const recordFail = () => {
+      const fails = readGuard().fails + 1;
+      writeGuard({ fails, until: fails >= 5 ? Date.now() + Math.min(30000 * 2 ** (fails - 5), 900000) : 0 });
+    };
+
+    loginBusyRef.current = true;
+    try {
+      // التحقق بيتم على سيرفر Firebase (مش في المتصفح)، وفيه حماية ضد التخمين
+      const emails = role === 'admin' ? [ADMIN_EMAIL] : [await staffEmailFor(code), ADMIN_EMAIL];
+      let cred = null;
+      for (const email of emails) {
+        try { cred = await signInWithEmailAndPassword(auth, email, code); break; }
+        catch (err) { if (err.code === 'auth/too-many-requests') throw err; }
       }
-      if (role === 'manager' && matchedStaff.role === 'tech') {
-        setLoginPrompt(p => ({ ...p, error: 'هذا الكود خاص بفني إنتاج وليس للإدارة!' }));
-        return;
-      }
-      setIsSuperAdmin(false);
+      if (!cred) { recordFail(); setErr('الكود غير صحيح! تأكد من الكود الخاص بك.'); return; }
+
+      const snap = await getDoc(doc(db, 'users', cred.user.uid));
+      if (!snap.exists()) { await signOut(auth); setErr('هذا الحساب غير مفعّل.'); return; }
+      const u = snap.data();
+
+      if (role === 'admin' && u.role !== 'admin') { await signOut(auth); recordFail(); setErr('الكود غير صحيح! تأكد من الكود الخاص بك.'); return; }
+      if (role === 'manager' && u.role === 'tech') { await signOut(auth); setErr('هذا الكود خاص بفني إنتاج وليس للإدارة!'); return; }
+      if (adminState.isMaintenance && u.role !== 'admin') { await signOut(auth); setErr('الموقع في وضع الصيانة والتحديث حالياً!'); return; }
+
+      writeGuard({ fails: 0, until: 0 });
+      const isAdminUser = u.role === 'admin';
+      setIsSuperAdmin(isAdminUser);
       setLoggedUserInfo({
-        name: matchedStaff.name,
-        roleTitle: matchedStaff.roleTitle || ROLE_TITLES[matchedStaff.role] || 'فني',
-        code: matchedStaff.code
+        name: isAdminUser ? 'مسؤول النظام' : (u.name || ''),
+        roleTitle: isAdminUser ? 'أدمن' : (u.roleTitle || ROLE_TITLES[u.role] || 'فني'),
+        code: ''
       });
-      setCurrentUser(matchedStaff.role);
-      setActiveTab('dashboard');
+      setCurrentUser(isAdminUser ? (role === 'admin' ? 'admin' : role) : u.role);
+      setActiveTab(isAdminUser && role === 'admin' ? 'admin' : 'dashboard');
       closeLogin();
-      return;
+    } catch (err) {
+      console.error(err);
+      setErr(err && err.code === 'auth/too-many-requests'
+        ? 'محاولات كتير. استنى شوية وجرب تاني.'
+        : 'تعذر تسجيل الدخول. اتأكد من الإنترنت وجرب تاني.');
+    } finally {
+      loginBusyRef.current = false;
     }
-
-    const ok = (role === 'tech' && code === adminState.techCode) || (role === 'manager' && code === adminState.managerCode);
-    if (!ok) {
-      setLoginPrompt(p => ({ ...p, error: 'الكود غير صحيح! تأكد من الكود الخاص بك.' }));
-      return;
-    }
-    if (adminState.isMaintenance) {
-      setLoginPrompt(p => ({ ...p, error: 'الموقع في وضع الصيانة والتحديث حالياً!' }));
-      return;
-    }
-    setIsSuperAdmin(false);
-    setLoggedUserInfo({
-      name: '',
-      roleTitle: ROLE_TITLES[role] || 'مستخدم',
-      code
-    });
-    setCurrentUser(role);
-    setActiveTab('dashboard');
-    closeLogin();
   };
 
   const handleSuperAdminSwitchRole = (role) => {
@@ -1078,14 +1229,31 @@ export default function App() {
     if (role === 'admin') setActiveTab('admin'); else if (activeTab === 'admin') setActiveTab('dashboard');
   };
   const handleLogout = () => {
+    if (auth) signOut(auth).catch(e => console.error(e));
     setCurrentUser('none');
     setLoggedUserInfo({ name: '', roleTitle: '', code: '' });
     setIsSuperAdmin(false);
     setActiveTab('dashboard');
+    setStaffAccounts([]);
+    setVisitLogged(false);
   };
   const handleSaveAdminSettings = (updated) => {
     setAdminState(updated); save({ admin: updated });
-    showAlert("تم الحفظ", "تم تحديث إعدادات الأدمن والأكواد بنجاح.");
+    showAlert("تم الحفظ", "تم تحديث إعدادات الموقع بنجاح.");
+  };
+  const [newAdminPw, setNewAdminPw] = useState('');
+  const handleChangeAdminPassword = async () => {
+    if (newAdminPw.length < 8) { showAlert('كلمة مرور ضعيفة', 'اكتب 8 حروف أو أرقام على الأقل.'); return; }
+    try {
+      await updatePassword(auth.currentUser, newAdminPw);
+      setNewAdminPw('');
+      showAlert('تم التغيير', 'تم تغيير كلمة مرور الأدمن بنجاح.');
+    } catch (err) {
+      console.error(err);
+      showAlert('تعذر التغيير', err && err.code === 'auth/requires-recent-login'
+        ? 'اعمل تسجيل خروج وادخل تاني، وبعدها غيّر كلمة المرور.'
+        : 'حصلت مشكلة. جرب تاني.');
+    }
   };
 
   /* ---------- الأرشيف ---------- */
@@ -1453,7 +1621,7 @@ export default function App() {
                       type="text"
                       value={newStaffForm.code}
                       onChange={e => setNewStaffForm({ ...newStaffForm, code: e.target.value })}
-                      placeholder="مثال: 5050"
+                      placeholder="6 حروف أو أرقام على الأقل"
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-center outline-none focus:border-blue-500"
                     />
                   </div>
@@ -1479,7 +1647,7 @@ export default function App() {
                 <h4 className="text-xs font-black text-slate-700">الأفراد المسجلون حالياً ({staffAccounts.length}):</h4>
                 {staffAccounts.length === 0 ? (
                   <div className="text-center py-6 bg-white rounded-xl border border-slate-200 text-slate-400 text-xs font-bold">
-                    لم يتم إضافة أكواد فردية بعد. (الأكواد العامة الحالية: فني {adminState.techCode} | مدير {adminState.managerCode})
+                    لم يتم إضافة أفراد بعد.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1497,7 +1665,7 @@ export default function App() {
                             </span>
                           </div>
                           <span className="text-[10px] text-slate-500 font-mono mt-0.5">
-                            الكود: <strong className="text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">{member.code}</strong>
+                            الكود: <strong className="text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">••••••</strong>
                           </span>
                         </div>
                         <button
@@ -2208,17 +2376,11 @@ export default function App() {
             </div>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-            <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Key className="w-4 h-4 text-blue-600" /> الأكواد العامة الافتراضية</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {[['كود فني الإنتاج العام', 'techCode', 'text-blue-700'], ['كود مدير المصنع العام', 'managerCode', 'text-emerald-700'], ['كود الأدمن (Admin)', 'adminCode', 'text-amber-700']].map(([label, key, cls]) => (
-                <div key={key} className="bg-white p-3 rounded-lg border border-slate-200">
-                  <label className={`text-xs font-bold block mb-1 ${cls}`}>{label}:</label>
-                  <input type="text" value={adminState[key]} onChange={(e) => setAdminState({ ...adminState, [key]: e.target.value })} className="w-full p-2 border border-slate-300 rounded font-mono text-sm font-bold text-center" />
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-end">
-              <button onClick={() => handleSaveAdminSettings(adminState)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow"><Save className="w-4 h-4" /> حفظ الأكواد والإعدادات</button>
+            <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5"><Key className="w-4 h-4 text-blue-600" /> تغيير كلمة مرور الأدمن</h3>
+            <p className="text-xs text-slate-500">أكواد الفنيين والمهندسين والمدراء بتتعمل من قسم الأفراد، وبتتخزن مشفّرة ومش بتظهر لحد.</p>
+            <div className="flex gap-2">
+              <input type="password" value={newAdminPw} onChange={(e) => setNewAdminPw(e.target.value)} placeholder="كلمة المرور الجديدة (8 على الأقل)" className="flex-1 p-2 border border-slate-300 rounded font-mono text-sm" />
+              <button onClick={handleChangeAdminPassword} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-lg text-xs shadow">تغيير</button>
             </div>
           </div>
         </div>
@@ -2530,5 +2692,13 @@ export default function App() {
         </button>
       </footer>
     </div>
+  );
+}
+
+export default function Root() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   );
 }
