@@ -181,7 +181,7 @@ const convertGBToISO = (gb) => {
 };
 
 /* ======================================================
-  التصدير (Excel / PDF) - للمدير فقط
+  التصدير (Excel / PDF) - للمدير فقط (بدون توقيع في الطباعة)
   ====================================================== */
 const esc = (s) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
@@ -216,7 +216,6 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
   td{padding:5px;border:1px solid #cbd5e1;text-align:center}
   tr:nth-child(even) td{background:#f1f5f9}
   .tot td{font-weight:bold;background:#dbeafe!important}
-  .dev-footer{margin-top:18px;padding-top:8px;border-top:2px solid #cbd5e1;text-align:center;font-size:11px;color:#475569;font-weight:bold}
   @media print{ body{padding:0} h2{break-after:avoid} tr{break-inside:avoid} }
 </style></head><body>
 <h1>شركة الجيوشي للصلب - تقرير تتبع الدرافيل والممرات</h1>
@@ -228,7 +227,6 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
 <tr class="tot"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
 <table>${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
-<div class="dev-footer">Designed &amp; Engineered by Bassam Waleed — النظام الذكي لتتبع الدرافيل والممرات</div>
 </body></html>`;
 };
 
@@ -417,7 +415,7 @@ export default function App() {
   const [userAuth, setUserAuth] = useState(null);
   const appId = 'al-gioshy-steel-rolls';
 
-  // نافذة بطاقة مصمم ومطور الموقع (Bassam Waleed)
+  // نافذة بطاقة فريق تطوير وإشراف النظام (م. حسين عبدالله & Bassam Waleed)
   const [devModalOpen, setDevModalOpen] = useState(false);
 
   // الصلاحيات
@@ -1118,11 +1116,11 @@ export default function App() {
   const pendingCount = pendingList.filter(r => r.status === 'pending').length;
 
   /* ======================================================
-    نافذة بطاقة مصمم ومطور النظام (Bassam Waleed)
+    نافذة بطاقة فريق تطوير وإشراف النظام (م. حسين عبدالله & Bassam Waleed)
     ====================================================== */
   const developerCardModalJSX = devModalOpen && (
     <Overlay z={110}>
-      <div className="bg-slate-900 border-2 border-amber-400/80 rounded-2xl max-w-sm w-full p-6 text-white shadow-[0_0_40px_rgba(245,158,11,0.25)] relative overflow-hidden text-center">
+      <div className="bg-slate-900 border-2 border-amber-400/80 rounded-2xl max-w-md w-full p-5 sm:p-6 text-white shadow-[0_0_40px_rgba(245,158,11,0.25)] relative overflow-hidden text-center">
         <div className="absolute -top-12 -right-12 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-12 -left-12 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
 
@@ -1133,24 +1131,43 @@ export default function App() {
           <X className="w-4 h-4" />
         </button>
 
-        <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg text-slate-950">
-          <Award className="w-9 h-9" />
+        <div className="w-14 h-14 mx-auto mb-2.5 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-lg text-slate-950">
+          <Award className="w-8 h-8" />
         </div>
 
-        <span className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full text-[10px] font-black bg-amber-400/15 text-amber-300 border border-amber-400/30 mb-2">
-          <Sparkles className="w-3 h-3" /> System Architect &amp; Developer
-        </span>
-
-        <h3 className="text-2xl font-black tracking-wide bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-200 bg-clip-text text-transparent" dir="ltr">
-          Eng. Bassam Waleed
+        <h3 className="text-base sm:text-lg font-black text-slate-100 mb-4">
+          فريق تطوير وإشراف النظام
         </h3>
-        <p className="text-xs font-bold text-slate-300 mt-1">بسام وليد — مصمم ومطور النظام</p>
 
-        <div className="mt-4 bg-slate-800/90 border border-slate-700 rounded-xl p-3 text-[11px] text-slate-300 leading-relaxed font-bold space-y-1">
-          <p className="text-amber-300">النظام الذكي لتتبع الدرافيل والممرات والإنتاجية</p>
-          <p className="text-[10px] text-slate-400 font-normal">
-            تم التصميم والبرمجة خصيصاً لإدارة خطوط الدرفلة وحساب أعمار الممرات والأطنان بدقة لحظية.
-          </p>
+        <div className="flex flex-col gap-3 text-right">
+          {/* الكارت الأول: الإشراف الهندسي */}
+          <div className="bg-slate-800/90 border border-blue-500/40 rounded-xl p-3.5 shadow-md">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-300 border border-blue-400/30 mb-1.5">
+              <Settings2 className="w-3 h-3" /> صاحب الفكرة والإشراف الفني والهندسي
+            </span>
+            <h4 className="text-base font-black text-white">
+              م. حسين عبدالله <span className="text-xs font-bold text-blue-300">(مهندس الإنتاج)</span>
+            </h4>
+            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+              إعداد ومراجعة معادلات التشغيل وتطوير آليات تتبع الدرافيل والممرات.
+            </p>
+          </div>
+
+          {/* الكارت الثاني: التصميم والبرمجة */}
+          <div className="bg-slate-800/90 border border-amber-500/40 rounded-xl p-3.5 shadow-md">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400/15 text-amber-300 border border-amber-400/30 mb-1.5" dir="ltr">
+              <Sparkles className="w-3 h-3" /> System Architect &amp; Developer
+            </span>
+            <div className="flex items-baseline justify-between flex-wrap gap-1">
+              <h4 className="text-base font-black tracking-wide bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-200 bg-clip-text text-transparent" dir="ltr">
+                Bassam Waleed
+              </h4>
+              <span className="text-xs font-bold text-amber-300">(بسام وليد)</span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+              تصميم وهندسة البرمجيات وتطوير النظام السحابي التفاعلي.
+            </p>
+          </div>
         </div>
 
         <button
@@ -1238,21 +1255,26 @@ export default function App() {
             </div>
           )}
 
-          {/* توقيع مصمم الموقع في شاشة الدخول */}
+          {/* توقيع الإشراف الهندسي ومصمم النظام في شاشة الدخول */}
           <div className="mt-7 pt-4 border-t border-slate-700/80">
             <button
               type="button"
               onClick={() => setDevModalOpen(true)}
-              className="group w-full bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 hover:from-slate-800 hover:to-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-xl px-3 py-2 flex items-center justify-center gap-2 shadow-md transition-all"
+              className="group w-full bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 hover:from-slate-800 hover:to-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-xl p-2.5 flex flex-col gap-1.5 shadow-md transition-all"
             >
-              <Code2 className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform shrink-0" />
-              <div className="flex flex-col items-center leading-tight">
-                <span className="text-[9px] text-slate-400 font-bold">تم تصميم وتطوير النظام بواسطة</span>
-                <span className="text-xs font-black tracking-wider bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
+              <div className="flex items-center justify-center gap-1.5 text-[11px]">
+                <span className="text-slate-400 font-bold">فكرة وإشراف هندسي:</span>
+                <span className="font-black text-blue-300">م. حسين عبدالله</span>
+              </div>
+              <div className="w-2/3 h-px bg-slate-700/80 mx-auto" />
+              <div className="flex items-center justify-center gap-1.5 text-[11px]">
+                <Code2 className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform shrink-0" />
+                <span className="text-slate-400 font-bold">تصميم وتطوير النظام:</span>
+                <span className="font-black tracking-wider bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
                   Bassam Waleed
                 </span>
+                <Sparkles className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
               </div>
-              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
             </button>
           </div>
         </div>
@@ -2485,19 +2507,22 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== شريط التوقيع السفلي الثابت لمصمم ومطور الموقع (Bassam Waleed) ===== */}
+      {/* ===== شريط التوقيع السفلي الثابت (فكرة وإشراف م. حسين عبدالله | تصميم وتطوير Bassam Waleed) ===== */}
       <footer className="bg-slate-900 text-white px-3 py-1 rounded-lg flex items-center justify-between flex-none border border-slate-800 shadow-sm select-none">
-        <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold hidden sm:inline">
+        <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold hidden md:inline">
           نظام تتبع الدرافيل والممرات — الجيوشي للصلب
         </span>
         <button
           type="button"
           onClick={() => setDevModalOpen(true)}
-          className="mx-auto sm:mx-0 flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 px-2.5 py-0.5 rounded-full transition-all group"
-          title="عرض بطاقة مصمم ومطور النظام"
+          className="mx-auto md:mx-0 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 bg-slate-800/90 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 px-3 py-0.5 rounded-full transition-all group"
+          title="عرض بطاقة فريق تطوير وإشراف النظام"
         >
+          <span className="text-[9px] text-slate-300 font-bold">فكرة وإشراف:</span>
+          <span className="text-[10px] font-black text-blue-300">م. حسين عبدالله</span>
+          <span className="text-slate-600">|</span>
           <Code2 className="w-3 h-3 text-amber-400 group-hover:scale-110 transition-transform" />
-          <span className="text-[9px] text-slate-300 font-bold">تطوير وتصميم:</span>
+          <span className="text-[9px] text-slate-300 font-bold">تصميم وتطوير:</span>
           <span className="text-[10px] sm:text-[11px] font-black tracking-wide bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
             Bassam Waleed
           </span>
