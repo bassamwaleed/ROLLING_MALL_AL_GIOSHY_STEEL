@@ -200,6 +200,9 @@ const convertGBToISO = (gb) => {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* حماية محاولات تسجيل الدخول (على مستوى المتصفح - بتبطّأ التخمين لكنها مش بديل عن Firebase Auth) */
+/* ستاندات بتتنفذ فيها طلبات الفني فوراً (من غير انتظار موافقة)، وبتروح للمدير للمراجعة والتأكيد */
+const AUTO_APPLY_STANDS = [8, 9, 10, 11, 12];
+
 const GUARD_KEY = 'gioshy_login_guard';
 const readGuard = () => { try { return JSON.parse(localStorage.getItem(GUARD_KEY)) || { fails: 0, until: 0 }; } catch { return { fails: 0, until: 0 }; } };
 const writeGuard = (g) => { try { localStorage.setItem(GUARD_KEY, JSON.stringify(g)); } catch { /* ignore */ } };
@@ -458,6 +461,52 @@ const Overlay = ({ z = 50, children }) => (
 /* ======================================================
   التطبيق الرئيسي
   ====================================================== */
+/* خانة وزن البليت: بتتحفظ لما تخلّص كتابة (مش مع كل رقم) وبتقبل قيمة منطقية بس */
+const WeightControl = ({ value, onCommit }) => {
+  const [draft, setDraft] = React.useState(String(value));
+  React.useEffect(() => { setDraft(String(value)); }, [value]);
+  const commit = () => {
+    const v = Number(draft);
+    if (v >= 0.1 && v <= 5) { if (v !== Number(value)) onCommit(v); }
+    else setDraft(String(value));
+  };
+  return (
+    <input
+      type="number" step="0.01" min="0.1" max="5" value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      className="w-20 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-white outline-none focus:border-blue-500"
+    />
+  );
+};
+
+/* توقيع فريق التطوير (شاشة الدخول + الشريط السفلي) */
+const Credits = ({ onClick, compact = false }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title="عرض بطاقة فريق تطوير وإشراف النظام"
+    className={`group rounded-xl border border-slate-600/70 hover:border-amber-300/70 bg-slate-900/80 hover:bg-slate-900 transition-colors ${compact ? 'w-auto px-3 py-1' : 'w-full px-4 py-3'}`}
+  >
+    <div className={compact ? 'flex flex-wrap items-center justify-center gap-x-4 gap-y-0.5' : 'flex flex-col gap-2'}>
+      <div className="flex items-center justify-center gap-2">
+        <Award className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+        <span className="text-[10px] font-bold text-slate-400">فكرة وإشراف هندسي</span>
+        <span className="text-xs font-black text-sky-300">م. حسين عبدالله</span>
+      </div>
+      {compact
+        ? <span className="hidden sm:block w-px h-3.5 bg-slate-600" />
+        : <div className="h-px w-1/2 mx-auto bg-slate-700" />}
+      <div className="flex items-center justify-center gap-2">
+        <Code2 className="w-3.5 h-3.5 text-amber-300 shrink-0 group-hover:rotate-12 transition-transform" />
+        <span className="text-[10px] font-bold text-slate-400">تصميم وتطوير</span>
+        <span dir="ltr" className="text-xs font-black tracking-wide text-amber-300">Bassam Waleed</span>
+      </div>
+    </div>
+  </button>
+);
+
 function App() {
   const [currentUser, setCurrentUser] = useState('none'); // 'none' | 'tech' | 'engineer' | 'manager' | 'admin'
   const [loggedUserInfo, setLoggedUserInfo] = useState({ name: '', roleTitle: '', code: '' });
@@ -471,8 +520,9 @@ function App() {
 
   // الصلاحيات
   const isManagerLike = currentUser === 'manager' || currentUser === 'admin' || currentUser === 'engineer';
-  const canManageUsers = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
-  const canAddStand = currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin;
+  const canManageUsers = currentUser === 'admin' || isSuperAdmin;
+  const canAddStand = currentUser === 'admin' || isSuperAdmin;
+  const canApplyDirect = (standId) => isManagerLike || AUTO_APPLY_STANDS.includes(Number(standId));
   const canRecordShift = currentUser === 'tech' || currentUser === 'engineer' || currentUser === 'admin';
 
   const roleLabel = loggedUserInfo.name
@@ -604,7 +654,7 @@ function App() {
 
   // قائمة الأفراد (للمدير والأدمن فقط)
   useEffect(() => {
-    if (!userAuth || !db || !(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin)) return;
+    if (!userAuth || !db || !(currentUser === 'admin' || isSuperAdmin)) return;
     const unsub = onSnapshot(collection(db, 'users'), (snap) => {
       setStaffAccounts(
         snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -627,7 +677,7 @@ function App() {
   // أول تشغيل: المدير/الأدمن بيزرع الستاندات الافتراضية لو قاعدة البيانات فاضية فعلاً (مؤكد من السيرفر)
   useEffect(() => {
     if (!standsEmpty || !db || !userAuth) return;
-    if (!(currentUser === 'manager' || currentUser === 'admin' || isSuperAdmin)) return;
+    if (!(currentUser === 'admin' || isSuperAdmin)) return;
     const b = writeBatch(db);
     buildInitialStands().forEach(s => b.set(doc(db, 'factory', appId, 'stands', String(s.id)), s));
     b.commit().catch(e => console.error('Seed error:', e));
@@ -944,6 +994,16 @@ function App() {
       save({ stands: r.list, changes: [r.log, ...passChanges] });
       return;
     }
+    if (AUTO_APPLY_STANDS.includes(Number(req.standId))) {
+      const r = applyPassChange(stands, req, billetWeight, roleLabel, productionArchive);
+      if (!r) return;
+      r.log.autoApplied = true;
+      r.log.needsReview = true;
+      r.log.approvedBy = 'تنفيذ مباشر (بانتظار تأكيد المدير)';
+      save({ stands: r.list, changes: [r.log, ...passChanges] });
+      showAlert('تم التنفيذ', `تم تنفيذ التغيير فوراً باسم (${roleLabel}) وإرساله للمدير للاطلاع والتأكيد.`);
+      return;
+    }
     save({ pending: [req, ...pendingList] });
     showAlert('تم إرسال الطلب', `تم إرسال الطلب باسم (${roleLabel}) للمدير. هيتنفذ بعد موافقته، وتقدر تتابع حالته من كارت الستاند.`);
   };
@@ -1065,6 +1125,19 @@ function App() {
   };
   const dismissRequest = (id) => save({ pending: pendingList.filter(x => x.id !== id) });
 
+  /* تغييرات ستاندات 8-12 اللي اتنفذت مباشرة: المدير يأكدها أو يعدّلها */
+  const confirmReviewedChange = (c) => save({
+    changes: passChanges.map(x => x.id === c.id
+      ? { ...x, needsReview: false, reviewedBy: roleLabel, reviewedAt: new Date().toLocaleString('ar-EG') }
+      : x)
+  });
+  const editStandFromReview = (c) => {
+    const idx = stands.findIndex(s => String(s.id) === String(c.standId));
+    if (idx < 0) return;
+    setApprovalsOpen(false);
+    setRollModal({ isOpen: true, standIndex: idx, isEditingInfo: true });
+  };
+
   const handleResetAllStands = () => {
     showConfirm('تحذير شديد', 'هل أنت متأكد من تصفير كافة الستاندات والممرات بالكامل والبدء من ممر 1؟', () => {
       const today = new Date().toLocaleDateString('en-GB');
@@ -1081,7 +1154,7 @@ function App() {
     const val = Number(v);
     if (val > 0) save({ stands: stands.map((s, i) => i === index ? { ...s, maxLimit: val } : s) });
   };
-  const handleWeightChange = (v) => { const val = Number(v); if (val > 0) save({ weight: val }); };
+  const handleWeightChange = (v) => { const val = Number(v); if (val >= 0.1 && val <= 5) save({ weight: val }); };
 
   /* ---------- إنتاج الوردية ---------- */
   const currentDateStr = currentProdDate.toLocaleDateString('en-GB');
@@ -1281,7 +1354,7 @@ function App() {
     </div>
   );
 
-  const pendingCount = pendingList.filter(r => r.status === 'pending').length;
+  const pendingCount = pendingList.filter(r => r.status === 'pending').length + passChanges.filter(c => c.needsReview).length;
 
   /* ======================================================
     نافذة بطاقة فريق تطوير وإشراف النظام (م. حسين عبدالله & Bassam Waleed)
@@ -1424,26 +1497,8 @@ function App() {
           )}
 
           {/* توقيع الإشراف الهندسي ومصمم النظام في شاشة الدخول */}
-          <div className="mt-7 pt-4 border-t border-slate-700/80">
-            <button
-              type="button"
-              onClick={() => setDevModalOpen(true)}
-              className="group w-full bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 hover:from-slate-800 hover:to-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-xl p-2.5 flex flex-col gap-1.5 shadow-md transition-all"
-            >
-              <div className="flex items-center justify-center gap-1.5 text-[11px]">
-                <span className="text-slate-400 font-bold">فكرة وإشراف هندسي:</span>
-                <span className="font-black text-blue-300">م. حسين عبدالله</span>
-              </div>
-              <div className="w-2/3 h-px bg-slate-700/80 mx-auto" />
-              <div className="flex items-center justify-center gap-1.5 text-[11px]">
-                <Code2 className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform shrink-0" />
-                <span className="text-slate-400 font-bold">تصميم وتطوير النظام:</span>
-                <span className="font-black tracking-wider bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
-                  Bassam Waleed
-                </span>
-                <Sparkles className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
-              </div>
-            </button>
+          <div className="mt-6 pt-4 border-t border-slate-700/80">
+            <Credits onClick={() => setDevModalOpen(true)} />
           </div>
         </div>
       </div>
@@ -1717,15 +1772,20 @@ function App() {
             <div className="bg-slate-900 p-3.5 flex justify-between items-center text-white shrink-0">
               <h3 className="font-bold text-sm flex items-center gap-2">
                 <RefreshCw className="w-4 h-4 text-emerald-400" />
-                {isManagerLike ? 'تركيب درفيل جديد وإدخال بياناته' : 'طلب تركيب درفيل جديد'} ({newRollStandObj.name})
+                {canApplyDirect(newRollStandObj.id) ? 'تركيب درفيل جديد وإدخال بياناته' : 'طلب تركيب درفيل جديد'} ({newRollStandObj.name})
               </h3>
               <button type="button" onClick={() => setNewRollModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-              {!isManagerLike && (
+              {!canApplyDirect(newRollStandObj.id) && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
                   <Hourglass className="w-4 h-4 shrink-0" /> سيتم إرسال مواصفات الدرفيل الجديد باسم ({roleLabel}) للمدير للمراجعة والاعتماد.
+                </div>
+              )}
+              {!isManagerLike && canApplyDirect(newRollStandObj.id) && (
+                <div className="bg-sky-50 border border-sky-300 text-sky-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
+                  <CheckCircle className="w-4 h-4 shrink-0" /> التغيير ده هيتنفذ فوراً باسم ({roleLabel}) وبيوصل للمدير للمراجعة والتأكيد.
                 </div>
               )}
 
@@ -1806,7 +1866,7 @@ function App() {
               </div>
 
               <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg shadow text-xs sm:text-sm mt-1">
-                {isManagerLike ? 'تأكيد تركيب الدرفيل الجديد وتصفير الممرات' : 'إرسال بيانات الدرفيل الجديد للمدير للاعتماد'}
+                {canApplyDirect(newRollStandObj.id) ? 'تأكيد تركيب الدرفيل الجديد وتصفير الممرات' : 'إرسال بيانات الدرفيل الجديد للمدير للاعتماد'}
               </button>
             </div>
           </form>
@@ -1886,10 +1946,10 @@ function App() {
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
                   <div className="flex flex-wrap items-center gap-2">
                     <button onClick={() => initiateResetStand(rollModal.standIndex)} className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow">
-                      <ArrowLeftRight className="w-3.5 h-3.5" /> {isManagerLike ? 'تغيير الممر' : 'طلب تغيير ممر'}
+                      <ArrowLeftRight className="w-3.5 h-3.5" /> {canApplyDirect(st.id) ? 'تغيير الممر' : 'طلب تغيير ممر'}
                     </button>
                     <button onClick={handleInstallNewRoll} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 border border-emerald-300">
-                      <RefreshCw className="w-3.5 h-3.5" /> {isManagerLike ? 'تركيب درفيل جديد' : 'طلب تركيب درفيل جديد'}
+                      <RefreshCw className="w-3.5 h-3.5" /> {canApplyDirect(st.id) ? 'تركيب درفيل جديد' : 'طلب تركيب درفيل جديد'}
                     </button>
                     <button onClick={() => setHistoryModal({ isOpen: true, standId: st.id })} className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 border border-slate-300">
                       <History className="w-3.5 h-3.5" /> السجل
@@ -1992,13 +2052,18 @@ function App() {
         <Overlay z={60}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
             <div className="bg-slate-900 p-3 flex justify-between items-center text-white shrink-0">
-              <h3 className="font-bold text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4 text-amber-400" /> {isManagerLike ? 'تغيير ممر' : 'طلب تغيير ممر'} - {resetStandObj.name}</h3>
+              <h3 className="font-bold text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4 text-amber-400" /> {canApplyDirect(resetStandObj.id) ? 'تغيير ممر' : 'طلب تغيير ممر'} - {resetStandObj.name}</h3>
               <button onClick={() => setResetModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-              {!isManagerLike && (
+              {!canApplyDirect(resetStandObj.id) && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
                   <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت باسم ({roleLabel}) للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده.
+                </div>
+              )}
+              {!isManagerLike && canApplyDirect(resetStandObj.id) && (
+                <div className="bg-sky-50 border border-sky-300 text-sky-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
+                  <CheckCircle className="w-4 h-4 shrink-0" /> التغيير ده هيتنفذ فوراً باسم ({roleLabel}) وبيوصل للمدير للمراجعة والتأكيد.
                 </div>
               )}
               <div className="bg-blue-50 border border-blue-200 p-2.5 rounded-lg flex justify-between items-center text-xs font-bold text-blue-900">
@@ -2066,7 +2131,7 @@ function App() {
                 <textarea rows="2" value={resetNotes} onChange={e => setResetNotes(e.target.value)} className="w-full border border-slate-300 rounded p-2 text-xs focus:border-blue-500 outline-none resize-none" placeholder="تآكل ممر، خشونة، كسر، تغيير مقاس..."></textarea>
               </div>
               <button onClick={confirmResetStand} className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-lg hover:bg-blue-700 active:scale-95 transition-all shadow text-xs sm:text-sm">
-                {isManagerLike ? `تأكيد قفل ممر ${resetStandObj.activePass} وتشغيل ممر ${resetTargetPass}` : `إرسال الطلب للمدير (ممر ${resetStandObj.activePass} ← ممر ${resetTargetPass})`}
+                {canApplyDirect(resetStandObj.id) ? `تأكيد قفل ممر ${resetStandObj.activePass} وتشغيل ممر ${resetTargetPass}` : `إرسال الطلب للمدير (ممر ${resetStandObj.activePass} ← ممر ${resetTargetPass})`}
               </button>
             </div>
           </div>
@@ -2078,7 +2143,7 @@ function App() {
         <Overlay z={70}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
             <div className="bg-slate-900 p-3 flex justify-between items-center text-white shrink-0">
-              <h3 className="font-bold text-sm flex items-center gap-2"><Inbox className="w-4 h-4 text-amber-400" /> طلبات بانتظار الموافقة ({pendingCount})</h3>
+              <h3 className="font-bold text-sm flex items-center gap-2"><Inbox className="w-4 h-4 text-amber-400" /> الطلبات والتغييرات للمراجعة ({pendingCount})</h3>
               <button onClick={() => setApprovalsOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-3 overflow-y-auto flex flex-col gap-3 bg-slate-50">
@@ -2147,6 +2212,33 @@ function App() {
                   </div>
                 );
               })}
+
+              {passChanges.some(c => c.needsReview) && (
+                <div className="text-[11px] font-black text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-2.5 py-1.5">
+                  تغييرات اتنفذت مباشرة (ستاندات 8 إلى 12) - راجعها وأكدها أو عدّلها
+                </div>
+              )}
+              {passChanges.filter(c => c.needsReview).map(c => (
+                <div key={c.id} className="bg-white border-2 border-sky-200 rounded-xl p-3 flex flex-col gap-2 shadow-sm">
+                  <div className="flex justify-between items-center flex-wrap gap-1">
+                    <span className="font-black text-sm text-slate-900">{c.standName}</span>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded bg-sky-100 text-sky-800">تم التنفيذ - للمراجعة</span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 font-bold bg-slate-100 px-2 py-1 rounded">
+                    نفّذه: <strong className="text-blue-700">{c.requestedBy}</strong> | {c.date} - {c.shift} | {c.time} | مقاس {c.productSize}
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-800 flex flex-wrap justify-between gap-2">
+                    <span>{c.kind === 'newRoll' ? 'تركيب درفيل جديد' : `من ممر ${c.fromPass} ← ممر ${c.toPass}`}</span>
+                    <span>إنتاج الممر المقفول: <strong className="font-mono">{Number(c.tons).toFixed(1)} طن</strong></span>
+                    <span>بليت إضافي: {c.billetsAtChange || 0}</span>
+                  </div>
+                  {c.notes && <div className="text-[10px] text-slate-600 font-bold">{c.notes}</div>}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => editStandFromReview(c)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> تعديل</button>
+                    <button onClick={() => confirmReviewedChange(c)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow"><Check className="w-3.5 h-3.5" /> تأكيد</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </Overlay>
@@ -2390,6 +2482,15 @@ function App() {
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-2 flex-1 overflow-hidden p-1">
 
+          <div className="flex-none flex items-center justify-between gap-2 bg-white rounded-lg border border-slate-300 shadow-sm px-2.5 py-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Sliders className="w-4 h-4 text-blue-600 shrink-0" />
+              <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
+              <WeightControl value={billetWeight} onCommit={handleWeightChange} />
+            </div>
+            <span className="text-[10px] text-slate-500 font-bold hidden sm:inline">بيتحسب عليه إنتاج كل الستاندات (من 0.1 إلى 5 طن)</span>
+          </div>
+
           {isManagerLike && (
             <div className="flex flex-col flex-none bg-white rounded-lg border border-slate-300 shadow-sm overflow-hidden">
               <div
@@ -2423,17 +2524,6 @@ function App() {
 
               {isManagerToolbarOpen && (
                 <div className="px-2.5 pb-2.5 pt-2 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Sliders className="w-4 h-4 text-blue-600" />
-                    <span className="text-xs font-bold text-slate-700">وزن البليت (طن):</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={billetWeight}
-                      onChange={(e) => handleWeightChange(e.target.value)}
-                      className="w-16 p-1 border border-slate-300 rounded text-center font-mono font-bold text-xs bg-white outline-none focus:border-blue-500"
-                    />
-                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {canAddStand && (
                       <button onClick={openAddStandModal} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95">
@@ -2670,26 +2760,13 @@ function App() {
       )}
 
       {/* ===== شريط التوقيع السفلي الثابت (فكرة وإشراف م. حسين عبدالله | تصميم وتطوير Bassam Waleed) ===== */}
-      <footer className="bg-slate-900 text-white px-3 py-1 rounded-lg flex items-center justify-between flex-none border border-slate-800 shadow-sm select-none">
-        <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold hidden md:inline">
+      <footer className="bg-slate-900 text-white px-3 py-1.5 rounded-lg flex items-center justify-between gap-2 flex-none border border-slate-800 shadow-sm select-none">
+        <span className="text-[10px] text-slate-400 font-bold hidden md:inline">
           نظام تتبع الدرافيل والممرات — الجيوشي للصلب
         </span>
-        <button
-          type="button"
-          onClick={() => setDevModalOpen(true)}
-          className="mx-auto md:mx-0 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 bg-slate-800/90 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 px-3 py-0.5 rounded-full transition-all group"
-          title="عرض بطاقة فريق تطوير وإشراف النظام"
-        >
-          <span className="text-[9px] text-slate-300 font-bold">فكرة وإشراف:</span>
-          <span className="text-[10px] font-black text-blue-300">م. حسين عبدالله</span>
-          <span className="text-slate-600">|</span>
-          <Code2 className="w-3 h-3 text-amber-400 group-hover:scale-110 transition-transform" />
-          <span className="text-[9px] text-slate-300 font-bold">تصميم وتطوير:</span>
-          <span className="text-[10px] sm:text-[11px] font-black tracking-wide bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 bg-clip-text text-transparent" dir="ltr">
-            Bassam Waleed
-          </span>
-          <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-        </button>
+        <div className="mx-auto md:mx-0">
+          <Credits compact onClick={() => setDevModalOpen(true)} />
+        </div>
       </footer>
     </div>
   );
