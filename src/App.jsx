@@ -512,8 +512,8 @@ const Credits = ({ onClick, compact = false }) => (
     <div className={compact ? 'flex flex-wrap items-center justify-center gap-x-4 gap-y-0.5' : 'flex flex-col gap-2'}>
       <div className="flex items-center justify-center gap-2">
         <Award className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-        <span className="text-[10px] font-bold text-slate-400">فكرة وإشراف هندسي</span>
-        <span className="text-xs font-black text-sky-300">م. حسين عبدالله</span>
+        <span className="text-[10px] font-bold text-slate-400">إشراف هندسي</span>
+        <span className="text-xs font-black text-sky-300">الباشمهندس حسين</span>
       </div>
       {compact
         ? <span className="hidden sm:block w-px h-3.5 bg-slate-600" />
@@ -521,7 +521,7 @@ const Credits = ({ onClick, compact = false }) => (
       <div className="flex items-center justify-center gap-2">
         <Code2 className="w-3.5 h-3.5 text-amber-300 shrink-0 group-hover:rotate-12 transition-transform" />
         <span className="text-[10px] font-bold text-slate-400">تصميم وتطوير</span>
-        <span dir="ltr" className="text-xs font-black tracking-wide text-amber-300">Bassam Waleed</span>
+        <span className="text-xs font-black text-amber-300">بسام وليد</span>
       </div>
     </div>
   </button>
@@ -535,7 +535,7 @@ function App() {
   const [userAuth, setUserAuth] = useState(null);
   const appId = 'al-gioshy-steel-rolls';
 
-  // نافذة بطاقة فريق تطوير وإشراف النظام (م. حسين عبدالله & Bassam Waleed)
+  // نافذة بطاقة فريق تطوير وإشراف النظام
   const [devModalOpen, setDevModalOpen] = useState(false);
 
   // الصلاحيات
@@ -576,6 +576,7 @@ function App() {
 
   const [billetWeight, setBilletWeight] = useState(0.75);
   const [alertPercent, setAlertPercent] = useState(80);
+  const [alertExpanded, setAlertExpanded] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityList, setActivityList] = useState([]);
   const backupInputRef = useRef(null);
@@ -1558,7 +1559,7 @@ function App() {
   const pendingCount = pendingList.filter(r => r.status === 'pending').length + passChanges.filter(c => c.needsReview).length;
 
   /* ======================================================
-    نافذة بطاقة فريق تطوير وإشراف النظام (م. حسين عبدالله & Bassam Waleed)
+    نافذة بطاقة فريق تطوير وإشراف النظام
     ====================================================== */
   const developerCardModalJSX = devModalOpen && (
     <Overlay z={110}>
@@ -1578,37 +1579,24 @@ function App() {
         </div>
 
         <h3 className="text-base sm:text-lg font-black text-slate-100 mb-4">
-          فريق تطوير وإشراف النظام
+          فريق العمل
         </h3>
 
         <div className="flex flex-col gap-3 text-right">
-          {/* الكارت الأول: الإشراف الهندسي */}
+          {/* إشراف هندسي */}
           <div className="bg-slate-800/90 border border-blue-500/40 rounded-xl p-3.5 shadow-md">
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-500/20 text-blue-300 border border-blue-400/30 mb-1.5">
-              <Settings2 className="w-3 h-3" /> صاحب الفكرة والإشراف الفني والهندسي
+              <Settings2 className="w-3 h-3" /> إشراف هندسي
             </span>
-            <h4 className="text-base font-black text-white">
-              م. حسين عبدالله <span className="text-xs font-bold text-blue-300">(مهندس الإنتاج)</span>
-            </h4>
-            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-              إعداد ومراجعة معادلات التشغيل وتطوير آليات تتبع الدرافيل والممرات.
-            </p>
+            <h4 className="text-lg font-black text-white">الباشمهندس حسين</h4>
           </div>
 
-          {/* الكارت الثاني: التصميم والبرمجة */}
+          {/* تصميم وتطوير */}
           <div className="bg-slate-800/90 border border-amber-500/40 rounded-xl p-3.5 shadow-md">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400/15 text-amber-300 border border-amber-400/30 mb-1.5" dir="ltr">
-              <Sparkles className="w-3 h-3" /> System Architect &amp; Developer
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400/15 text-amber-300 border border-amber-400/30 mb-1.5">
+              <Sparkles className="w-3 h-3" /> تصميم وتطوير
             </span>
-            <div className="flex items-baseline justify-between flex-wrap gap-1">
-              <h4 className="text-base font-black tracking-wide bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-200 bg-clip-text text-transparent" dir="ltr">
-                Bassam Waleed
-              </h4>
-              <span className="text-xs font-bold text-amber-300">(بسام وليد)</span>
-            </div>
-            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-              تصميم وهندسة البرمجيات وتطوير النظام السحابي التفاعلي.
-            </p>
+            <h4 className="text-lg font-black text-amber-300">بسام وليد</h4>
           </div>
         </div>
 
@@ -1686,12 +1674,11 @@ function App() {
             <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال بقاعدة البيانات...</div>
           ) : (
             <form onSubmit={handleQuickLogin} className="space-y-3 text-right">
-              <label className="block text-xs font-bold text-slate-300">أدخل الكود الخاص بك</label>
               <input
                 type="password" autoComplete="off" value={quickCode}
                 onChange={(e) => { setQuickCode(e.target.value); setQuickError(''); }}
                 disabled={adminState.isMaintenance || quickBusy}
-                placeholder="الكود..."
+                placeholder="أدخل الكود"
                 className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-center font-mono text-lg tracking-widest text-white focus:border-blue-500 outline-none disabled:opacity-50"
               />
               {quickError && <p className="text-red-400 text-xs font-bold text-center bg-red-950/50 border border-red-800 p-1.5 rounded">{quickError}</p>}
@@ -1699,7 +1686,6 @@ function App() {
                 className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance || !quickCode.trim() ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
                 <Key className="w-5 h-5" /> {quickBusy ? 'جاري التحقق...' : 'دخول'}
               </button>
-              <p className="text-[10px] text-slate-500 font-bold text-center">الكود بيحدد صلاحيتك وصفحتك تلقائياً</p>
             </form>
           )}
 
@@ -2741,23 +2727,39 @@ function App() {
               <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
               <WeightControl value={billetWeight} onCommit={handleWeightChange} />
             </div>
-            <span className="text-[10px] text-slate-500 font-bold hidden sm:inline">بيتحسب عليه إنتاج كل الستاندات (من 0.1 إلى 5 طن)</span>
           </div>
 
-          {alertStands.length > 0 && (
-            <div className="flex-none bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-2.5 py-1.5 text-[11px] font-bold flex items-center gap-2 flex-wrap">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>تنبيه ممرات (+{alertPercent}%):</span>
-              {alertStands.map(s => {
-                const p = (s.accumulatedTons / s.maxLimit) * 100;
-                return (
-                  <span key={s.id} className={`px-1.5 py-0.5 rounded border font-black ${p >= 100 ? 'bg-red-100 text-red-800 border-red-300' : 'bg-yellow-100 text-yellow-800 border-yellow-300'}`}>
-                    {s.name} {p.toFixed(0)}%
+          {alertStands.length > 0 && (() => {
+            const pctOf = (s) => (s.accumulatedTons / s.maxLimit) * 100;
+            const dangerN = alertStands.filter(s => pctOf(s) >= 100).length;
+            const warnN = alertStands.length - dangerN;
+            const sorted = [...alertStands].sort((x, y) => pctOf(y) - pctOf(x));
+            return (
+              <div className="flex-none bg-amber-50 border border-amber-300 rounded-lg text-amber-900">
+                <button type="button" onClick={() => setAlertExpanded(v => !v)}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] font-black">
+                  <span className="flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" /> تنبيه ممرات</span>
+                  <span className="flex items-center gap-1.5">
+                    {dangerN > 0 && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-300">خطر {dangerN}</span>}
+                    {warnN > 0 && <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 border border-yellow-300">إنذار {warnN}</span>}
+                    {alertExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                   </span>
-                );
-              })}
-            </div>
-          )}
+                </button>
+                {alertExpanded && (
+                  <div className="px-2.5 pb-2 pt-1.5 border-t border-amber-200 flex flex-wrap gap-1 max-h-28 overflow-y-auto">
+                    {sorted.map(s => {
+                      const p = pctOf(s);
+                      return (
+                        <span key={s.id} className={`px-1.5 py-0.5 rounded border text-[10px] font-black ${p >= 100 ? 'bg-red-100 text-red-800 border-red-300' : 'bg-yellow-100 text-yellow-800 border-yellow-300'}`}>
+                          {s.name} {p.toFixed(0)}%
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {isManagerLike && (
             <div className="flex flex-col flex-none bg-white rounded-lg border border-slate-300 shadow-sm overflow-hidden">
