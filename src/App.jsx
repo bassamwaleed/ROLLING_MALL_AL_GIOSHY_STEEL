@@ -600,6 +600,9 @@ function App() {
     visitsCount: 0, lastVisit: ''
   });
   const [loginPrompt, setLoginPrompt] = useState({ isOpen: false, role: '', codeInput: '', error: '' });
+  const [quickCode, setQuickCode] = useState('');
+  const [quickError, setQuickError] = useState('');
+  const [quickBusy, setQuickBusy] = useState(false);
   const [visitLogged, setVisitLogged] = useState(false);
 
   const [rollModal, setRollModal] = useState({ isOpen: false, standIndex: null, isEditingInfo: false });
@@ -636,7 +639,11 @@ function App() {
   useEffect(() => {
     if (!db) { setIsDataLoaded(true); return; }
     const unsub = onSnapshot(doc(db, 'config', 'public'), (snap) => {
-      if (snap.exists()) setAdminState(prev => ({ ...prev, ...snap.data() }));
+      if (snap.exists()) {
+        const d = snap.data();
+        setAdminState(prev => ({ ...prev, ...d }));
+        if (d.logoUrl) setCustomLogo(d.logoUrl);
+      }
       setIsDataLoaded(true);
     }, (e) => { console.error(e); setIsDataLoaded(true); });
     return () => unsub();
@@ -671,7 +678,7 @@ function App() {
         const d = snap.data();
         if (d.billetWeight) setBilletWeight(d.billetWeight);
         if (d.alertPercent) setAlertPercent(d.alertPercent);
-        if (d.logoUrl) setCustomLogo(d.logoUrl);
+        if (d.logoUrl) setCustomLogo(prev => prev || d.logoUrl);
         if (d.selectedProductSize) setSelectedProductSize(d.selectedProductSize);
       }, listenerError('settings'))
     ];
@@ -699,6 +706,13 @@ function App() {
     }, listenerError('visits'));
     return () => unsub();
   }, [userAuth, currentUser, isSuperAdmin]);
+
+  // نقل الشعار القديم (كان في الإعدادات) للمكان العام مرة واحدة، عشان يظهر قبل تسجيل الدخول
+  useEffect(() => {
+    if (!db || !userAuth || !isAdminRole || !isDataLoaded || !customLogo || adminState.logoUrl) return;
+    if (!isValidLogo(customLogo)) return;
+    setDoc(doc(db, 'config', 'public'), { logoUrl: customLogo }, { merge: true }).catch(e => console.error('logo migrate:', e));
+  }, [userAuth, isAdminRole, isDataLoaded, customLogo, adminState.logoUrl]);
 
   // سجل النشاط (للأدمن فقط، وبيتحمل لما يتفتح بس)
   useEffect(() => {
@@ -859,14 +873,14 @@ function App() {
         }
         const upd = {};
         if (weight !== undefined) upd.billetWeight = weight;
-        if (logo !== undefined) upd.logoUrl = logo;
         if (productSize !== undefined) upd.selectedProductSize = productSize;
         if (alertPct !== undefined) upd.alertPercent = alertPct;
         if (Object.keys(upd).length) await setDoc(doc(db, 'factory', appId, 'settings', 'main'), upd, { merge: true });
-        if (admin !== undefined) {
+        if (admin !== undefined || logo !== undefined) {
           const pub = {};
-          if (admin.isMaintenance !== undefined) pub.isMaintenance = !!admin.isMaintenance;
-          if (admin.maintenanceMessage !== undefined) pub.maintenanceMessage = String(admin.maintenanceMessage);
+          if (admin !== undefined && admin.isMaintenance !== undefined) pub.isMaintenance = !!admin.isMaintenance;
+          if (admin !== undefined && admin.maintenanceMessage !== undefined) pub.maintenanceMessage = String(admin.maintenanceMessage);
+          if (logo !== undefined) pub.logoUrl = logo;
           await setDoc(doc(db, 'config', 'public'), pub, { merge: true });
         }
       } catch (e) {
@@ -1410,13 +1424,10 @@ function App() {
   const closeLogin = () => setLoginPrompt({ isOpen: false, role: '', codeInput: '', error: '' });
 
   const loginBusyRef = useRef(false);
-  const handleVerifyAccessCode = async (e) => {
-    e.preventDefault();
+  const doLogin = async (role, rawCode, setErr) => {
     if (loginBusyRef.current) return;
-    const { role, codeInput } = loginPrompt;
-    const code = codeInput.trim();
+    const code = rawCode.trim();
     if (!code) return;
-    const setErr = (msg) => setLoginPrompt(p => ({ ...p, error: msg }));
 
     const guard = readGuard();
     if (Date.now() < guard.until) {
@@ -1458,8 +1469,11 @@ function App() {
         roleTitle: isAdminUser ? 'أدمن' : (u.roleTitle || ROLE_TITLES[u.role] || 'فني'),
         code: ''
       });
-      setCurrentUser(isAdminUser ? (role === 'admin' ? 'admin' : role) : u.role);
-      setActiveTab(isAdminUser && role === 'admin' ? 'admin' : 'dashboard');
+      // الكود هو اللي بيحدد الصفحة: الأدمن للوحة التحكم، وباقي الأدوار لصفحتها
+      const toAdminPanel = isAdminUser && (role === 'admin' || role === 'any');
+      setCurrentUser(isAdminUser ? (toAdminPanel ? 'admin' : role) : u.role);
+      setActiveTab(toAdminPanel ? 'admin' : 'dashboard');
+      setQuickCode('');
       closeLogin();
     } catch (err) {
       console.error(err);
@@ -1469,6 +1483,18 @@ function App() {
     } finally {
       loginBusyRef.current = false;
     }
+  };
+
+  const handleVerifyAccessCode = (e) => {
+    e.preventDefault();
+    return doLogin(loginPrompt.role, loginPrompt.codeInput, (msg) => setLoginPrompt(p => ({ ...p, error: msg })));
+  };
+  const handleQuickLogin = async (e) => {
+    e.preventDefault();
+    setQuickBusy(true);
+    setQuickError('');
+    await doLogin('any', quickCode, setQuickError);
+    setQuickBusy(false);
   };
 
   const handleSuperAdminSwitchRole = (role) => {
@@ -1659,16 +1685,22 @@ function App() {
           {!isDataLoaded ? (
             <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال بقاعدة البيانات...</div>
           ) : (
-            <div className="space-y-3">
-              <button onClick={() => openLoginModal('tech')} disabled={adminState.isMaintenance}
-                className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                <Edit3 className="w-5 h-5" /> دخول فني / مهندس الإنتاج
+            <form onSubmit={handleQuickLogin} className="space-y-3 text-right">
+              <label className="block text-xs font-bold text-slate-300">أدخل الكود الخاص بك</label>
+              <input
+                type="password" autoComplete="off" value={quickCode}
+                onChange={(e) => { setQuickCode(e.target.value); setQuickError(''); }}
+                disabled={adminState.isMaintenance || quickBusy}
+                placeholder="الكود..."
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-center font-mono text-lg tracking-widest text-white focus:border-blue-500 outline-none disabled:opacity-50"
+              />
+              {quickError && <p className="text-red-400 text-xs font-bold text-center bg-red-950/50 border border-red-800 p-1.5 rounded">{quickError}</p>}
+              <button type="submit" disabled={adminState.isMaintenance || quickBusy || !quickCode.trim()}
+                className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance || !quickCode.trim() ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                <Key className="w-5 h-5" /> {quickBusy ? 'جاري التحقق...' : 'دخول'}
               </button>
-              <button onClick={() => openLoginModal('manager')} disabled={adminState.isMaintenance}
-                className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-white'}`}>
-                <TrendingUp className="w-5 h-5" /> دخول إدارة المصنع
-              </button>
-            </div>
+              <p className="text-[10px] text-slate-500 font-bold text-center">الكود بيحدد صلاحيتك وصفحتك تلقائياً</p>
+            </form>
           )}
 
           {/* توقيع الإشراف الهندسي ومصمم النظام في شاشة الدخول */}
