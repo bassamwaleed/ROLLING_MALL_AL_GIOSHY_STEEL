@@ -239,48 +239,167 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-const buildReportHTML = ({ stands, archive, changes, billetWeight }) => {
-  const now = new Date().toLocaleString('ar-EG');
+/* أسماء التوقيع في النموذج الرسمي (GS-PLD/F-001) */
+const REPORT_SIGNATORIES = { tech: 'Eng. Mostafa Ali', planning: 'Eng. Mohamed Fayed' };
+
+const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, productSize }) => {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateStr = `${pad(now.getDate())} / ${pad(now.getMonth() + 1)} / ${now.getFullYear()}`;
+  const stamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${now.getHours()}:${pad(now.getMinutes())}`;
+  const monthEn = now.toLocaleString('en-US', { month: 'long' });
   const th = (arr) => `<tr>${arr.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
   const td = (arr) => `<tr>${arr.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`;
+  const COLS = Math.max(26, ...stands.map(s => (s.passes || []).length));
+  const standNo = (s) => (/^\d+$/.test(String(s.id)) ? String(s.id) : esc(s.name));
 
-  const standsRows = stands.map(s => {
-    const total = s.passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
-    return td([s.name, s.type, s.diameter, s.entryDate, `${s.activePass} / ${s.totalPasses}`,
-      s.accumulatedTons.toFixed(0), s.maxLimit, `${Math.round((s.accumulatedTons / s.maxLimit) * 100)}%`, total.toFixed(0)]);
+  /* جدول الستاندات والممرات */
+  const standRows = stands.map(s => {
+    const passes = s.passes || [];
+    const total = passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
+    const off = s.isActive === false;
+    const orderCells = Array.from({ length: COLS }, (_, i) => {
+      const p = passes[i];
+      if (!p) return '<td class="x"></td>';
+      return p.order ? `<td class="ord">${esc(p.order)}</td>` : '<td class="oe"></td>';
+    }).join('');
+    const tonCells = Array.from({ length: COLS }, (_, i) => {
+      const p = passes[i];
+      if (!p) return '<td class="x"></td>';
+      const tons = Math.round(Number(p.tons) || 0);
+      if (p.status === 'active') return `<td class="cur">${tons}</td>`;
+      if (p.status === 'used') return `<td class="done">${tons}</td>`;
+      return `<td class="un">${tons}</td>`;
+    }).join('');
+    const lead = (txt, cls = '') => `<td rowspan="2" class="${cls}">${txt}</td>`;
+    return `<tr class="${off ? 'off' : ''}">${lead('Stand', 'lbl')}${lead(`<b>${standNo(s)}</b>${off ? '<div class="offtag">OFF</div>' : ''}`)}${lead(esc(s.type || ''), 'sm')}${lead(`<b>${esc(s.rollCode || '')}</b>`)}${lead(esc(s.diameter || ''))}${lead(esc(s.hardness || ''), 'sm')}${lead(esc(s.entryDate || ''), 'entry')}${lead(esc(s.totalPasses || ''), 'pn')}${orderCells}${lead(`<b>${Math.round(total)}</b>`, 'tot')}${lead(esc(s.maxLimit || ''), 'req')}</tr><tr class="${off ? 'off' : ''}">${tonCells}</tr>`;
   }).join('');
 
+  /* جدول تغيير المنتج (من سجل الإنتاج) */
+  const asc = [...archive].filter(l => l.productSize).sort((x, y) => x.timestamp - y.timestamp);
+  const sched = [];
+  let prev = null;
+  asc.forEach(l => {
+    const cur = String(l.productSize);
+    if (prev !== null && cur !== prev) sched.push({ date: l.date, from: prev, to: cur });
+    prev = cur;
+  });
+  const schedRows = sched.slice(-6).map((c, i) => `<tr><td>${esc(c.date)}</td><td>${esc(c.from)} mm</td><td>To</td><td>${esc(c.to)} mm</td><td>تغيير منتج</td><td>${i + 1}</td></tr>`).join('')
+    || '<tr><td colspan="6">-</td></tr>';
+
+  /* جدول الممر الحالي والإنتاجية المطلوبة */
+  const avrRows = stands.map(s => `<tr><td>STAND ${standNo(s)}</td><td>${esc(s.activePass)}</td><td>${esc(s.maxLimit)} Ton</td></tr>`).join('');
+
+  const logoHtml = logo && isValidLogo(logo)
+    ? `<img src="${esc(logo)}" style="height:46px" alt="logo">`
+    : '<div style="font-weight:bold;font-size:18px">الجيوشي للصلب<br>ALGIOSHY STEEL</div>';
+
+  /* صفحات التفاصيل */
   const logs = [...archive].sort((a, b) => b.timestamp - a.timestamp);
-  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, l.tons.toFixed(1), l.recordedBy || '-', l.time])).join('');
+  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, Number(l.tons).toFixed(1), l.recordedBy || '-', l.time])).join('');
   const sumT = logs.reduce((a, l) => a + l.tons, 0).toFixed(1);
   const sumB = logs.reduce((a, l) => a + l.billets, 0);
-
   const changeRows = changes.map(c => td([c.date, c.shift, c.standName,
     c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'})` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
     Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.requestedBy || '-', c.approvedBy || '-', c.notes || ''])).join('');
 
-  return `<html dir="rtl" lang="ar" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
-<title>تقرير الجيوشي للصلب</title>
+  return `<html dir="ltr" lang="en" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
+<title>Daily Report Of Pass Change</title>
 <style>
-  body{font-family:Tahoma,Arial,sans-serif;color:#0f172a;padding:16px}
-  h1{font-size:20px;margin:0} h2{font-size:14px;margin:22px 0 6px;border-right:4px solid #2563eb;padding-right:8px}
-  .meta{color:#64748b;font-size:11px;margin-top:4px}
-  table{border-collapse:collapse;width:100%;font-size:11px;margin-bottom:8px}
-  th{background:#0f172a;color:#fff;padding:6px;border:1px solid #334155}
-  td{padding:5px;border:1px solid #cbd5e1;text-align:center}
-  tr:nth-child(even) td{background:#f1f5f9}
-  .tot td{font-weight:bold;background:#dbeafe!important}
-  @media print{ body{padding:0} h2{break-after:avoid} tr{break-inside:avoid} }
+  @page{size:A4 landscape;margin:7mm}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{font-family:'Times New Roman',Tahoma,serif;color:#000;margin:0;padding:6px}
+  .rep{page-break-after:always}
+  table{border-collapse:collapse}
+  .hd{width:100%;border:2px solid #000;margin-bottom:2px}
+  .hd td{padding:4px 8px;vertical-align:middle}
+  .ttl{background:#ffff00;font-weight:bold;font-size:15px;text-align:center;padding:2px 14px;display:inline-block}
+  .ar{background:#ddd9c4;border:2px solid #000;font-weight:bold;font-size:14px;text-align:center;padding:2px 20px;display:inline-block;margin-top:3px}
+  .pbadge{background:#0070c0;color:#fff;font-weight:bold;font-size:14px;padding:1px 14px;display:inline-block;margin-top:3px}
+  .code{font-size:22px;font-weight:bold;text-align:center}
+  table.main{width:100%;font-size:9px;table-layout:fixed}
+  table.main th,table.main td{border:1px solid #000;text-align:center;padding:0;height:15px;font-style:italic}
+  table.main th{background:#fff;font-weight:bold;font-size:8px;font-style:normal}
+  .lbl{font-weight:bold;font-style:italic;font-size:8px}
+  .sm{font-size:8px}
+  .entry{font-weight:bold;font-size:8px;background:#d7e4bc}
+  .pn{background:#d7e4bc;font-weight:bold;font-size:12px}
+  .ord{background:#ffff00;font-weight:bold}
+  .oe{background:#fff}
+  .cur{background:#000;color:#fff;font-weight:bold}
+  .done{background:#b7d0ea;font-weight:bold}
+  .un{background:#fff}
+  .x{background:#d7e4bc}
+  .tot{background:#000;color:#fff;font-size:11px}
+  .req{font-size:8px}
+  tr.off td{background:#d9d9d9!important;color:#555!important}
+  .offtag{font-size:7px;font-weight:bold;color:#c00}
+  .low td,.low th{border:1px solid #000;font-size:8px;padding:2px 4px;text-align:center}
+  .low th{background:#f2dcdb}
+  .sig{font-size:9px;font-weight:bold}
+  .foot{font-size:8px;font-weight:bold;font-style:italic}
+  .det{font-family:Tahoma,Arial,sans-serif;direction:rtl}
+  .det h1{font-size:18px;margin:0 0 4px} .det h2{font-size:13px;margin:16px 0 6px;border-right:4px solid #2563eb;padding-right:8px}
+  .det .meta{color:#64748b;font-size:11px}
+  table.dt{width:100%;font-size:10px;margin-bottom:8px}
+  table.dt th{background:#0f172a;color:#fff;padding:5px;border:1px solid #334155}
+  table.dt td{padding:4px;border:1px solid #cbd5e1;text-align:center}
+  table.dt tr:nth-child(even) td{background:#f1f5f9}
+  table.dt tr.tt td{font-weight:bold;background:#dbeafe!important}
 </style></head><body>
-<h1>شركة الجيوشي للصلب - تقرير تتبع الدرافيل والممرات</h1>
-<div class="meta">تاريخ التقرير: ${esc(now)} | وزن البليت: ${esc(billetWeight)} طن</div>
-<h2>حالة الستاندات</h2>
-<table>${th(['الستاند', 'الشكل', 'القطر', 'تاريخ دخول الدرفيل', 'الممر الحالي', 'إنتاج الممر الحالي (طن)', 'الحد الأقصى', 'النسبة', 'إجمالي إنتاج الدرفيل (طن)'])}${standsRows}</table>
-<h2>سجل الإنتاج اليومي</h2>
-<table>${th(['التاريخ', 'اليوم', 'الوردية', 'المقاس', 'البليت', 'الطن', 'المسجل باسم', 'وقت التسجيل'])}${archiveRows}
-<tr class="tot"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
+<div class="rep">
+<table class="hd"><tr>
+  <td style="width:26%;border-right:2px solid #000">${logoHtml}</td>
+  <td style="text-align:center"><div class="ttl">Daily Report Of Pass Change</div><br><div class="ar">التقرير اليومى لتغيير الممرات</div><br><div style="font-weight:bold;font-size:14px;border:2px solid #000;display:inline-block;padding:0 40px;margin-top:3px">${esc(dateStr)}</div><br><div class="pbadge">${esc(productSize)} mm</div></td>
+  <td style="width:26%;border-left:2px solid #000;text-align:center"><div class="code">GS-PLD/F-001</div><div style="font-size:10px;margin-top:8px"><b>DATE</b> &nbsp; ${esc(stamp)}</div></td>
+</tr></table>
+
+<table class="main">
+<colgroup><col style="width:3.2%"><col style="width:2.6%"><col style="width:3.4%"><col style="width:4.2%"><col style="width:2.8%"><col style="width:4%"><col style="width:5.2%"><col style="width:2.8%">${Array.from({ length: COLS }, () => `<col style="width:${(61 / COLS).toFixed(2)}%">`).join('')}<col style="width:4%"><col style="width:3.6%"></colgroup>
+<tr><th>Stand</th><th>No.</th><th></th><th>CODE</th><th>Dia.</th><th>HARD-<br>NESS</th><th>Entry Date<br>For Line</th><th>PASS<br>No</th>${Array.from({ length: COLS }, (_, i) => `<th>${i + 1}</th>`).join('')}<th>TOTAL<br>TON</th><th>الإنتاجية<br>المطلوبة</th></tr>
+${standRows}
+</table>
+
+<table style="width:100%;margin-top:14px"><tr>
+  <td style="width:34%;vertical-align:top">
+    <table class="low" style="width:100%">
+      <tr><th colspan="6" style="background:#fff">( SCHEDULE OF CHANGE TYPE OF PRODUCT ) ${esc(monthEn)} <span style="color:#c00">${now.getFullYear()}</span></th></tr>
+      ${schedRows}
+    </table>
+  </td>
+  <td style="width:26%;vertical-align:top;padding:0 10px">
+    <table class="low" style="width:100%">
+      <tr><th>STAND</th><th>Pass No.</th><th>Avr.</th></tr>
+      ${avrRows}
+    </table>
+  </td>
+  <td style="vertical-align:top">
+    <table class="low" style="width:100%">
+      <tr><td class="cur" style="width:60px">0</td><td style="text-align:right">الممر الحالي وإجمالي الإنتاجية حتى تاريخه</td></tr>
+      <tr><td class="done">2500</td><td style="text-align:right">ممر منتهي وإجمالي إنتاجيته</td></tr>
+      <tr><td style="background:#d9d9d9">OFF</td><td style="text-align:right">ستاند متوقف</td></tr>
+    </table>
+  </td>
+</tr></table>
+
+<table style="width:100%;margin-top:18px"><tr>
+  <td class="sig" style="text-align:left">Tech.Office<br><br>${esc(REPORT_SIGNATORIES.tech)}</td>
+  <td class="sig" style="text-align:right">PLANNING MANEGER<br><br>${esc(REPORT_SIGNATORIES.planning)}</td>
+</tr></table>
+<table style="width:100%;margin-top:6px"><tr>
+  <td class="foot" style="text-align:left">Issue No 1 /Revision 0</td>
+  <td class="foot" style="text-align:right">Issue Date 1 /1/2025</td>
+</tr></table>
+</div>
+
+<div class="det">
+<h1>سجل الإنتاج اليومي</h1>
+<div class="meta">تاريخ التقرير: ${esc(stamp)} | وزن البليت: ${esc(billetWeight)} طن</div>
+<table class="dt">${th(['التاريخ', 'اليوم', 'الوردية', 'المقاس', 'البليت', 'الطن', 'المسجل باسم', 'وقت التسجيل'])}${archiveRows}
+<tr class="tt"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
-<table>${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
+<table class="dt">${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
+</div>
 </body></html>`;
 };
 
@@ -1035,7 +1154,16 @@ function App() {
 
   const handleProductSizeChange = (size) => {
     setSelectedProductSize(size);
-    save({ stands: stands.map(s => ({ ...s, isActive: true })), productSize: size });
+    // المنتج أكبر من 12 مم: ستاند 11 و12 بيتفصلوا تلقائياً، وباقي الستاندات شغالة
+    const big = Number(size) > 12;
+    const next = stands.map(s => ({ ...s, isActive: !(big && (String(s.id) === '11' || String(s.id) === '12')) }));
+    const flipped = next.filter((s, i) => s.isActive !== stands[i].isActive);
+    save({ stands: next, productSize: size });
+    if (flipped.length) {
+      showAlert(big ? 'تم فصل ستاندات' : 'تم تشغيل ستاندات',
+        big ? `تم فصل ${flipped.map(s => s.name).join(' و')} تلقائياً لأن المقاس أكبر من 12 مم.`
+            : `تم تشغيل ${flipped.map(s => s.name).join(' و')} تلقائياً.`);
+    }
   };
 
   const getStandStatus = (tons, limit) => {
@@ -1544,7 +1672,7 @@ function App() {
   const sortedDates = Object.keys(groupedArchive).sort((a, b) => groupedArchive[b].timestamp - groupedArchive[a].timestamp);
   const aggregatedLogs = Object.values(groupedArchive).flatMap(d => d.shiftsList).sort((a, b) => b.timestamp - a.timestamp);
 
-  const reportData = { stands, archive: productionArchive, changes: passChanges, billetWeight };
+  const reportData = { stands, archive: productionArchive, changes: passChanges, billetWeight, logo: customLogo, productSize: selectedProductSize };
   const exportButtons = isManagerLike && (
     <div className="flex gap-1.5">
       <button onClick={() => downloadExcel(reportData)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
