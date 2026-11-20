@@ -239,21 +239,35 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-/* أسماء التوقيع في النموذج الرسمي (GS-PLD/F-001) */
-const REPORT_SIGNATORIES = { tech: 'Eng. Mostafa Ali', planning: 'Eng. Mohamed Fayed' };
+/* توقيع مصمم النظام على التقارير */
+const DESIGNER_NAME = 'Bassam Waleed';
+const REPORT_CREDIT = `<div class="credit">System designed &amp; developed by <span class="nm">${DESIGNER_NAME}</span></div>`;
 
-const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, productSize }) => {
+const REPORT_CREDIT_CSS = `
+  .credit{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:10px;color:#444;letter-spacing:.5px;text-align:center}
+  .credit .nm{font-style:normal;font-weight:bold;color:#0b3d7a;letter-spacing:1.2px}`;
+
+const reportStamp = () => {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  const dateStr = `${pad(now.getDate())} / ${pad(now.getMonth() + 1)} / ${now.getFullYear()}`;
-  const stamp = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${now.getHours()}:${pad(now.getMinutes())}`;
+  return {
+    now,
+    dateStr: `${pad(now.getDate())} / ${pad(now.getMonth() + 1)} / ${now.getFullYear()}`,
+    stamp: `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${now.getHours()}:${pad(now.getMinutes())}`
+  };
+};
+
+const reportLogoHtml = (logo) => (logo && isValidLogo(logo)
+  ? `<img src="${esc(logo)}" style="height:46px" alt="logo">`
+  : '<div style="font-weight:bold;font-size:18px">الجيوشي للصلب<br>ALGIOSHY STEEL</div>');
+
+/* ---------- تقرير الممرات (نموذج GS-PLD/F-001) ---------- */
+const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
+  const { now, dateStr, stamp } = reportStamp();
   const monthEn = now.toLocaleString('en-US', { month: 'long' });
-  const th = (arr) => `<tr>${arr.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
-  const td = (arr) => `<tr>${arr.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`;
   const COLS = Math.max(26, ...stands.map(s => (s.passes || []).length));
   const standNo = (s) => (/^\d+$/.test(String(s.id)) ? String(s.id) : esc(s.name));
 
-  /* جدول الستاندات والممرات */
   const standRows = stands.map(s => {
     const passes = s.passes || [];
     const total = passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
@@ -275,7 +289,6 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, product
     return `<tr class="${off ? 'off' : ''}">${lead('Stand', 'lbl')}${lead(`<b>${standNo(s)}</b>${off ? '<div class="offtag">OFF</div>' : ''}`)}${lead(esc(s.type || ''), 'sm')}${lead(`<b>${esc(s.rollCode || '')}</b>`)}${lead(esc(s.diameter || ''))}${lead(esc(s.hardness || ''), 'sm')}${lead(esc(s.entryDate || ''), 'entry')}${lead(esc(s.totalPasses || ''), 'pn')}${orderCells}${lead(`<b>${Math.round(total)}</b>`, 'tot')}${lead(esc(s.maxLimit || ''), 'req')}</tr><tr class="${off ? 'off' : ''}">${tonCells}</tr>`;
   }).join('');
 
-  /* جدول تغيير المنتج (من سجل الإنتاج) */
   const asc = [...archive].filter(l => l.productSize).sort((x, y) => x.timestamp - y.timestamp);
   const sched = [];
   let prev = null;
@@ -286,22 +299,7 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, product
   });
   const schedRows = sched.slice(-6).map((c, i) => `<tr><td>${esc(c.date)}</td><td>${esc(c.from)} mm</td><td>To</td><td>${esc(c.to)} mm</td><td>تغيير منتج</td><td>${i + 1}</td></tr>`).join('')
     || '<tr><td colspan="6">-</td></tr>';
-
-  /* جدول الممر الحالي والإنتاجية المطلوبة */
   const avrRows = stands.map(s => `<tr><td>STAND ${standNo(s)}</td><td>${esc(s.activePass)}</td><td>${esc(s.maxLimit)} Ton</td></tr>`).join('');
-
-  const logoHtml = logo && isValidLogo(logo)
-    ? `<img src="${esc(logo)}" style="height:46px" alt="logo">`
-    : '<div style="font-weight:bold;font-size:18px">الجيوشي للصلب<br>ALGIOSHY STEEL</div>';
-
-  /* صفحات التفاصيل */
-  const logs = [...archive].sort((a, b) => b.timestamp - a.timestamp);
-  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, Number(l.tons).toFixed(1), l.recordedBy || '-', l.time])).join('');
-  const sumT = logs.reduce((a, l) => a + l.tons, 0).toFixed(1);
-  const sumB = logs.reduce((a, l) => a + l.billets, 0);
-  const changeRows = changes.map(c => td([c.date, c.shift, c.standName,
-    c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'})` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
-    Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.requestedBy || '-', c.approvedBy || '-', c.notes || ''])).join('');
 
   return `<html dir="ltr" lang="en" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
 <title>Daily Report Of Pass Change</title>
@@ -309,7 +307,6 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, product
   @page{size:A4 landscape;margin:7mm}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   body{font-family:'Times New Roman',Tahoma,serif;color:#000;margin:0;padding:6px}
-  .rep{page-break-after:always}
   table{border-collapse:collapse}
   .hd{width:100%;border:2px solid #000;margin-bottom:2px}
   .hd td{padding:4px 8px;vertical-align:middle}
@@ -336,20 +333,11 @@ const buildReportHTML = ({ stands, archive, changes, billetWeight, logo, product
   .offtag{font-size:7px;font-weight:bold;color:#c00}
   .low td,.low th{border:1px solid #000;font-size:8px;padding:2px 4px;text-align:center}
   .low th{background:#f2dcdb}
-  .sig{font-size:9px;font-weight:bold}
   .foot{font-size:8px;font-weight:bold;font-style:italic}
-  .det{font-family:Tahoma,Arial,sans-serif;direction:rtl}
-  .det h1{font-size:18px;margin:0 0 4px} .det h2{font-size:13px;margin:16px 0 6px;border-right:4px solid #2563eb;padding-right:8px}
-  .det .meta{color:#64748b;font-size:11px}
-  table.dt{width:100%;font-size:10px;margin-bottom:8px}
-  table.dt th{background:#0f172a;color:#fff;padding:5px;border:1px solid #334155}
-  table.dt td{padding:4px;border:1px solid #cbd5e1;text-align:center}
-  table.dt tr:nth-child(even) td{background:#f1f5f9}
-  table.dt tr.tt td{font-weight:bold;background:#dbeafe!important}
+  ${REPORT_CREDIT_CSS}
 </style></head><body>
-<div class="rep">
 <table class="hd"><tr>
-  <td style="width:26%;border-right:2px solid #000">${logoHtml}</td>
+  <td style="width:26%;border-right:2px solid #000">${reportLogoHtml(logo)}</td>
   <td style="text-align:center"><div class="ttl">Daily Report Of Pass Change</div><br><div class="ar">التقرير اليومى لتغيير الممرات</div><br><div style="font-weight:bold;font-size:14px;border:2px solid #000;display:inline-block;padding:0 40px;margin-top:3px">${esc(dateStr)}</div><br><div class="pbadge">${esc(productSize)} mm</div></td>
   <td style="width:26%;border-left:2px solid #000;text-align:center"><div class="code">GS-PLD/F-001</div><div style="font-size:10px;margin-top:8px"><b>DATE</b> &nbsp; ${esc(stamp)}</div></td>
 </tr></table>
@@ -382,43 +370,80 @@ ${standRows}
   </td>
 </tr></table>
 
-<table style="width:100%;margin-top:18px"><tr>
-  <td class="sig" style="text-align:left">Tech.Office<br><br>${esc(REPORT_SIGNATORIES.tech)}</td>
-  <td class="sig" style="text-align:right">PLANNING MANEGER<br><br>${esc(REPORT_SIGNATORIES.planning)}</td>
+<table style="width:100%;margin-top:26px"><tr>
+  <td class="foot" style="width:30%;text-align:left">Issue No 1 /Revision 0</td>
+  <td style="text-align:center">${REPORT_CREDIT}</td>
+  <td class="foot" style="width:30%;text-align:right">Issue Date 1 /1/2025</td>
 </tr></table>
-<table style="width:100%;margin-top:6px"><tr>
-  <td class="foot" style="text-align:left">Issue No 1 /Revision 0</td>
-  <td class="foot" style="text-align:right">Issue Date 1 /1/2025</td>
-</tr></table>
-</div>
+</body></html>`;
+};
 
-<div class="det">
-<h1>سجل الإنتاج اليومي</h1>
-<div class="meta">تاريخ التقرير: ${esc(stamp)} | وزن البليت: ${esc(billetWeight)} طن</div>
+/* ---------- التقرير اليومي (سجل الإنتاج + تغييرات الممرات) ---------- */
+const buildDailyReportHTML = ({ archive, changes, billetWeight, logo }) => {
+  const { dateStr, stamp } = reportStamp();
+  const th = (arr) => `<tr>${arr.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
+  const td = (arr) => `<tr>${arr.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`;
+  const logs = [...archive].sort((a, b) => b.timestamp - a.timestamp);
+  const archiveRows = logs.map(l => td([l.date, l.dayName, l.shift, l.productSize || '', l.billets, Number(l.tons).toFixed(1), l.recordedBy || '-', l.time])).join('');
+  const sumT = logs.reduce((a, l) => a + l.tons, 0).toFixed(1);
+  const sumB = logs.reduce((a, l) => a + l.billets, 0);
+  const changeRows = changes.map(c => td([c.date, c.shift, c.standName,
+    c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'})` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
+    Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.requestedBy || '-', c.approvedBy || '-', c.notes || ''])).join('');
+
+  return `<html dir="rtl" lang="ar" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
+<title>Daily Production Report</title>
+<style>
+  @page{size:A4 portrait;margin:10mm}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{font-family:Tahoma,Arial,sans-serif;color:#0f172a;margin:0;padding:8px}
+  table{border-collapse:collapse}
+  .hd{width:100%;border:2px solid #0f172a;margin-bottom:10px}
+  .hd td{padding:6px 10px;vertical-align:middle}
+  .t1{font-size:17px;font-weight:bold}
+  .t2{font-family:Georgia,'Times New Roman',serif;font-size:12px;color:#475569;font-style:italic}
+  h2{font-size:13px;margin:16px 0 6px;border-right:4px solid #2563eb;padding-right:8px}
+  table.dt{width:100%;font-size:10px;margin-bottom:8px}
+  table.dt th{background:#0f172a;color:#fff;padding:5px;border:1px solid #334155}
+  table.dt td{padding:4px;border:1px solid #cbd5e1;text-align:center}
+  table.dt tr:nth-child(even) td{background:#f1f5f9}
+  table.dt tr.tt td{font-weight:bold;background:#dbeafe!important}
+  tr{break-inside:avoid}
+  .cr{margin-top:22px;padding-top:6px;border-top:1px solid #94a3b8}
+  ${REPORT_CREDIT_CSS}
+</style></head><body>
+<table class="hd"><tr>
+  <td style="width:28%">${reportLogoHtml(logo)}</td>
+  <td style="text-align:center"><div class="t1">التقرير اليومي للإنتاج</div><div class="t2">Daily Production Report</div></td>
+  <td style="width:28%;text-align:left;font-size:11px"><b>${esc(dateStr)}</b><br>${esc(stamp)}<br>وزن البليت: ${esc(billetWeight)} طن</td>
+</tr></table>
+<h2>سجل الإنتاج اليومي</h2>
 <table class="dt">${th(['التاريخ', 'اليوم', 'الوردية', 'المقاس', 'البليت', 'الطن', 'المسجل باسم', 'وقت التسجيل'])}${archiveRows}
 <tr class="tt"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
 <table class="dt">${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
-</div>
+<div class="cr">${REPORT_CREDIT}</div>
 </body></html>`;
 };
 
-const downloadExcel = (data) => {
-  const html = '\ufeff' + buildReportHTML(data);
+const buildReportHTML = (data, kind = 'pass') => (kind === 'daily' ? buildDailyReportHTML(data) : buildPassReportHTML(data));
+
+const downloadExcel = (data, kind = 'pass') => {
+  const html = '\ufeff' + buildReportHTML(data, kind);
   const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `تقرير-الجيوشي-${formatDateToISO(new Date())}.xls`;
+  a.download = `${kind === 'daily' ? 'التقرير-اليومي' : 'تقرير-الممرات'}-${formatDateToISO(new Date())}.xls`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
-const printPDF = (data, onBlocked) => {
+const printPDF = (data, onBlocked, kind = 'pass') => {
   const w = window.open('', '_blank');
   if (!w) { onBlocked && onBlocked(); return; }
   w.document.open();
-  w.document.write(buildReportHTML(data) + '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>');
+  w.document.write(buildReportHTML(data, kind) + '<script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script>');
   w.document.close();
 };
 
@@ -696,6 +721,7 @@ function App() {
   const [billetWeight, setBilletWeight] = useState(0.75);
   const [alertPercent, setAlertPercent] = useState(80);
   const [alertExpanded, setAlertExpanded] = useState(false);
+  const [passReportOpen, setPassReportOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityList, setActivityList] = useState([]);
   const backupInputRef = useRef(null);
@@ -1673,14 +1699,22 @@ function App() {
   const aggregatedLogs = Object.values(groupedArchive).flatMap(d => d.shiftsList).sort((a, b) => b.timestamp - a.timestamp);
 
   const reportData = { stands, archive: productionArchive, changes: passChanges, billetWeight, logo: customLogo, productSize: selectedProductSize };
+  const onPrintBlocked = () => showAlert('تعذر الفتح', 'المتصفح منع النافذة. اسمح بالنوافذ المنبثقة لهذا الموقع وجرّب تاني.');
+  const reportBtn = (label, kind) => (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[10px] font-black text-slate-500 whitespace-nowrap">{label}:</span>
+      <button onClick={() => downloadExcel(reportData, kind)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
+        <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
+      </button>
+      <button onClick={() => printPDF(reportData, onPrintBlocked, kind)} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
+        <FileText className="w-3.5 h-3.5" /> طباعة
+      </button>
+    </div>
+  );
   const exportButtons = isManagerLike && (
-    <div className="flex gap-1.5">
-      <button onClick={() => downloadExcel(reportData)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
-        <FileSpreadsheet className="w-3.5 h-3.5" /> تصدير Excel
-      </button>
-      <button onClick={() => printPDF(reportData, () => showAlert('تعذر الفتح', 'المتصفح منع النافذة. اسمح بالنوافذ المنبثقة لهذا الموقع وجرّب تاني.'))} className="bg-rose-600 hover:bg-rose-700 text-white font-bold py-1.5 px-3 rounded text-[10px] flex items-center gap-1 shadow active:scale-95 transition-colors">
-        <FileText className="w-3.5 h-3.5" /> طباعة / PDF
-      </button>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {reportBtn('تقرير الممرات', 'pass')}
+      {reportBtn('التقرير اليومي', 'daily')}
     </div>
   );
 
@@ -2565,6 +2599,32 @@ function App() {
         </Overlay>
       )}
 
+      {passReportOpen && (
+        <Overlay z={90}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden border border-slate-300 flex flex-col max-h-[92vh]">
+            <div className="bg-slate-900 p-3 flex justify-between items-center text-white shrink-0 gap-2 flex-wrap">
+              <h3 className="font-bold text-sm flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /> تقرير الممرات</h3>
+              <div className="flex items-center gap-2">
+                {isManagerLike && (
+                  <>
+                    <button onClick={() => downloadExcel(reportData, 'pass')} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1 rounded text-[10px] flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</button>
+                    <button onClick={() => printPDF(reportData, onPrintBlocked, 'pass')} className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1 rounded text-[10px] flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> طباعة</button>
+                  </>
+                )}
+                <button onClick={() => setPassReportOpen(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            <div className="overflow-auto bg-slate-200 p-2">
+              <iframe
+                title="تقرير الممرات"
+                srcDoc={buildPassReportHTML(reportData)}
+                style={{ width: 1180, height: Math.max(660, 400 + stands.length * 36), border: 0, background: '#fff', display: 'block' }}
+              />
+            </div>
+          </div>
+        </Overlay>
+      )}
+
       {activityOpen && isAdminRole && (
         <Overlay z={90}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
@@ -2855,6 +2915,10 @@ function App() {
               <span className="text-xs font-bold text-slate-700">متوسط وزن البليت (طن):</span>
               <WeightControl value={billetWeight} onCommit={handleWeightChange} />
             </div>
+            <button onClick={() => setPassReportOpen(true)} title="تقرير الممرات"
+              className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg text-[11px] flex items-center gap-1.5 shadow active:scale-95 transition-colors">
+              <FileText className="w-4 h-4 text-amber-300" /> تقرير الممرات
+            </button>
           </div>
 
           {alertStands.length > 0 && (() => {
