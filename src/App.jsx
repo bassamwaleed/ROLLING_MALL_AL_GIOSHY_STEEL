@@ -5,7 +5,7 @@ import {
   Sliders, Trash2, Clock, Settings, X, UploadCloud, History,
   ShieldAlert, Key, Eye, Layers, Wrench, ArrowLeftRight,
   FileSpreadsheet, FileText, Inbox, Check, XCircle, Hourglass,
-  ChevronDown, ChevronUp, Plus, Code2, Sparkles, Award
+  ChevronDown, ChevronUp, Plus, Code2, Sparkles, Award, Download
 } from 'lucide-react';
 import { initializeApp, deleteApp } from 'firebase/app';
 import {
@@ -193,6 +193,11 @@ const convertGBToISO = (gb) => {
   if (p.length !== 3) return formatDateToISO(new Date());
   return `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
 };
+const isISODateFriday = (iso) => {
+  if (!iso || !iso.includes('-')) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay() === 5;
+};
 
 /* ======================================================
   التصدير (Excel / PDF) - للمدير فقط (بدون توقيع في الطباعة)
@@ -202,6 +207,21 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 /* حماية محاولات تسجيل الدخول (على مستوى المتصفح - بتبطّأ التخمين لكنها مش بديل عن Firebase Auth) */
 /* ستاندات بتتنفذ فيها طلبات الفني فوراً (من غير انتظار موافقة)، وبتروح للمدير للمراجعة والتأكيد */
 const AUTO_APPLY_STANDS = [8, 9, 10, 11, 12];
+
+/* تخصيص ممرات الستاند لمنتجات: productAlloc = [{ label: '10', count: 6 }, { label: '12-16-18', count: 4 }]
+   بالترتيب من ممر 1: أول شريحة بتاخد أول (count) ممر، وهكذا */
+const allocSegments = (stand) => (Array.isArray(stand && stand.productAlloc)
+  ? stand.productAlloc.filter(a => a && a.label && Number(a.count) > 0)
+  : []);
+const passLabelOf = (stand, passNumber) => {
+  let end = 0;
+  for (const a of allocSegments(stand)) {
+    end += Number(a.count);
+    if (Number(passNumber) <= end) return String(a.label);
+  }
+  return '';
+};
+const labelHasSize = (label, size) => String(label).split('-').map(x => x.trim()).includes(String(size));
 
 const GUARD_KEY = 'gioshy_login_guard';
 const readGuard = () => { try { return JSON.parse(localStorage.getItem(GUARD_KEY)) || { fails: 0, until: 0 }; } catch { return { fails: 0, until: 0 }; } };
@@ -272,11 +292,19 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
     const passes = s.passes || [];
     const total = passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
     const off = s.isActive === false;
-    const orderCells = Array.from({ length: COLS }, (_, i) => {
+    // الصف العلوي: ترتيب التشغيل (أصفر)، وفي الممرات اللي لسه ما اتشغلتش بيظهر المنتج المخصص لها
+    let orderCells = '';
+    for (let i = 0; i < COLS;) {
       const p = passes[i];
-      if (!p) return '<td class="x"></td>';
-      return p.order ? `<td class="ord">${esc(p.order)}</td>` : '<td class="oe"></td>';
-    }).join('');
+      if (!p) { orderCells += '<td class="x"></td>'; i++; continue; }
+      if (p.order) { orderCells += `<td class="ord">${esc(p.order)}</td>`; i++; continue; }
+      const lbl = passLabelOf(s, p.passNumber || i + 1);
+      if (!lbl) { orderCells += '<td class="oe"></td>'; i++; continue; }
+      let j = i + 1;
+      while (j < COLS && passes[j] && !passes[j].order && passLabelOf(s, passes[j].passNumber || j + 1) === lbl) j++;
+      orderCells += `<td class="lab" colspan="${j - i}">${esc(lbl)} mm</td>`;
+      i = j;
+    }
     const tonCells = Array.from({ length: COLS }, (_, i) => {
       const p = passes[i];
       if (!p) return '<td class="x"></td>';
@@ -300,13 +328,18 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
   const schedRows = sched.slice(-6).map((c, i) => `<tr><td>${esc(c.date)}</td><td>${esc(c.from)} mm</td><td>To</td><td>${esc(c.to)} mm</td><td>تغيير منتج</td><td>${i + 1}</td></tr>`).join('')
     || '<tr><td colspan="6">-</td></tr>';
   const avrRows = stands.map(s => `<tr><td>STAND ${standNo(s)}</td><td>${esc(s.activePass)}</td><td>${esc(s.maxLimit)} Ton</td></tr>`).join('');
+  const allocStands = stands.filter(s => allocSegments(s).length);
+  const allocTable = allocStands.length
+    ? `<table class="low" style="width:100%;margin-top:6px"><tr><th colspan="2" style="background:#e4dfec">PASSES ALLOCATION BY PRODUCT &nbsp;|&nbsp; تخصيص الممرات للمنتجات</th></tr>${allocStands.map(s => `<tr><td>STAND ${standNo(s)}</td><td>${allocSegments(s).map(a => `${esc(a.label)} mm × ${esc(a.count)}`).join(' &nbsp;|&nbsp; ')}</td></tr>`).join('')}</table>`
+    : '';
 
   return `<html dir="ltr" lang="en" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
 <title>Daily Report Of Pass Change</title>
 <style>
   @page{size:A4 landscape;margin:7mm}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  body{font-family:'Times New Roman',Tahoma,serif;color:#000;margin:0;padding:6px}
+  body{font-family:'Times New Roman',Tahoma,serif;color:#000;margin:0;padding:0}
+  #sheet{width:1065px;margin:0 auto;page-break-inside:avoid}
   table{border-collapse:collapse}
   .hd{width:100%;border:2px solid #000;margin-bottom:2px}
   .hd td{padding:4px 8px;vertical-align:middle}
@@ -315,7 +348,7 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
   .pbadge{background:#0070c0;color:#fff;font-weight:bold;font-size:14px;padding:1px 14px;display:inline-block;margin-top:3px}
   .code{font-size:22px;font-weight:bold;text-align:center}
   table.main{width:100%;font-size:9px;table-layout:fixed}
-  table.main th,table.main td{border:1px solid #000;text-align:center;padding:0;height:15px;font-style:italic}
+  table.main th,table.main td{border:1px solid #000;text-align:center;padding:0;height:14px;font-style:italic}
   table.main th{background:#fff;font-weight:bold;font-size:8px;font-style:normal}
   .lbl{font-weight:bold;font-style:italic;font-size:8px}
   .sm{font-size:8px}
@@ -323,6 +356,7 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
   .pn{background:#d7e4bc;font-weight:bold;font-size:12px}
   .ord{background:#ffff00;font-weight:bold}
   .oe{background:#fff}
+  .lab{background:#e4dfec;font-weight:bold;font-style:normal;font-size:8px}
   .cur{background:#000;color:#fff;font-weight:bold}
   .done{background:#b7d0ea;font-weight:bold}
   .un{background:#fff}
@@ -331,11 +365,12 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
   .req{font-size:8px}
   tr.off td{background:#d9d9d9!important;color:#555!important}
   .offtag{font-size:7px;font-weight:bold;color:#c00}
-  .low td,.low th{border:1px solid #000;font-size:8px;padding:2px 4px;text-align:center}
+  .low td,.low th{border:1px solid #000;font-size:7.5px;padding:1px 3px;line-height:1.15;text-align:center}
   .low th{background:#f2dcdb}
   .foot{font-size:8px;font-weight:bold;font-style:italic}
   ${REPORT_CREDIT_CSS}
 </style></head><body>
+<div id="sheet">
 <table class="hd"><tr>
   <td style="width:26%;border-right:2px solid #000">${reportLogoHtml(logo)}</td>
   <td style="text-align:center"><div class="ttl">Daily Report Of Pass Change</div><br><div class="ar">التقرير اليومى لتغيير الممرات</div><br><div style="font-weight:bold;font-size:14px;border:2px solid #000;display:inline-block;padding:0 40px;margin-top:3px">${esc(dateStr)}</div><br><div class="pbadge">${esc(productSize)} mm</div></td>
@@ -348,7 +383,7 @@ const buildPassReportHTML = ({ stands, archive, logo, productSize }) => {
 ${standRows}
 </table>
 
-<table style="width:100%;margin-top:14px"><tr>
+<table style="width:100%;margin-top:10px"><tr>
   <td style="width:34%;vertical-align:top">
     <table class="low" style="width:100%">
       <tr><th colspan="6" style="background:#fff">( SCHEDULE OF CHANGE TYPE OF PRODUCT ) ${esc(monthEn)} <span style="color:#c00">${now.getFullYear()}</span></th></tr>
@@ -367,19 +402,35 @@ ${standRows}
       <tr><td class="done">2500</td><td style="text-align:right">ممر منتهي وإجمالي إنتاجيته</td></tr>
       <tr><td style="background:#d9d9d9">OFF</td><td style="text-align:right">ستاند متوقف</td></tr>
     </table>
+    ${allocTable}
   </td>
 </tr></table>
 
-<table style="width:100%;margin-top:26px"><tr>
+<table style="width:100%;margin-top:12px"><tr>
   <td class="foot" style="width:30%;text-align:left">Issue No 1 /Revision 0</td>
   <td style="text-align:center">${REPORT_CREDIT}</td>
   <td class="foot" style="width:30%;text-align:right">Issue Date 1 /1/2025</td>
 </tr></table>
+</div>
+<script>
+(function () {
+  /* بيصغّر الورقة تلقائياً لو طولها أكبر من صفحة A4 بالعرض، عشان تتطبع في صفحة واحدة */
+  function fit() {
+    var s = document.getElementById('sheet');
+    if (!s) return;
+    s.style.zoom = 1;
+    var max = 730, h = s.scrollHeight;
+    if (h > max) s.style.zoom = max / h;
+  }
+  window.addEventListener('load', fit);
+  window.addEventListener('beforeprint', fit);
+})();
+</script>
 </body></html>`;
 };
 
 /* ---------- التقرير اليومي (سجل الإنتاج + تغييرات الممرات) ---------- */
-const buildDailyReportHTML = ({ archive, changes, billetWeight, logo }) => {
+const buildDailyReportHTML = ({ archive, changes, billetWeight, logo, stands = [] }) => {
   const { dateStr, stamp } = reportStamp();
   const th = (arr) => `<tr>${arr.map(h => `<th>${esc(h)}</th>`).join('')}</tr>`;
   const td = (arr) => `<tr>${arr.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`;
@@ -388,8 +439,19 @@ const buildDailyReportHTML = ({ archive, changes, billetWeight, logo }) => {
   const sumT = logs.reduce((a, l) => a + l.tons, 0).toFixed(1);
   const sumB = logs.reduce((a, l) => a + l.billets, 0);
   const changeRows = changes.map(c => td([c.date, c.shift, c.standName,
-    c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'})` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
+    c.kind === 'newRoll' ? `درفيل جديد (قطر ${c.newDiameter || '-'}) يبدأ من ممر ${c.toPass}` : `ممر ${c.fromPass} ← ممر ${c.toPass}`,
     Number(c.tons).toFixed(1), c.billetsAtChange || 0, c.productSize || '', c.requestedBy || '-', c.approvedBy || '-', c.notes || ''])).join('');
+
+  const allocStands = stands.filter(s => allocSegments(s).length);
+  const allocRows = allocStands.map(s => {
+    let from = 1;
+    const parts = allocSegments(s).map(a => { const f = from; from += Number(a.count); return `${a.label} مم: ممر ${f}${Number(a.count) > 1 ? '–' + (from - 1) : ''}`; });
+    const rest = Number(s.totalPasses) - (from - 1);
+    return td([s.name, s.rollCode || '-', parts.join('  |  '), rest > 0 ? `${rest} ممر` : '-']);
+  }).join('');
+  const allocSection = allocStands.length
+    ? `<h2>توزيع الممرات على المنتجات</h2><table class="dt">${th(['الستاند', 'كود الدرفيل', 'التوزيع', 'غير مخصص'])}${allocRows}</table>`
+    : '';
 
   return `<html dir="rtl" lang="ar" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8">
 <title>Daily Production Report</title>
@@ -422,6 +484,7 @@ const buildDailyReportHTML = ({ archive, changes, billetWeight, logo }) => {
 <tr class="tt"><td colspan="4">الإجمالي</td><td>${sumB}</td><td>${sumT}</td><td colspan="2"></td></tr></table>
 <h2>سجل تغيير الممرات والدرافيل</h2>
 <table class="dt">${th(['التاريخ', 'الوردية', 'الستاند', 'التغيير', 'إنتاج الممر/الدرفيل (طن)', 'بليت إضافي', 'المقاس', 'طلب بواسطة', 'اعتماد بواسطة', 'ملاحظات'])}${changeRows}</table>
+${allocSection}
 <div class="cr">${REPORT_CREDIT}</div>
 </body></html>`;
 };
@@ -521,36 +584,50 @@ const applyPassChange = (list, req, billetWeight, approver, archive) => {
   let log;
 
   if (req.kind === 'newRoll') {
-    const total = st.passes.reduce((a, p) => a + (Number(p.tons) || 0), 0);
     const newTotalPasses = Math.max(1, Math.min(40, Number(req.newTotalPasses) || st.totalPasses));
+    const startPass = Math.max(1, Math.min(newTotalPasses, Math.floor(Number(req.startPass)) || 1));
+    const oldBillets = Number(req.billets) || 0;
+
+    // إنتاج الدرفيل القديم: بنفس منطق تغيير الممر (البليت اللي اشتغله قبل التغيير في الوردية)
+    const split = computePassSplit(st, req.date, req.shift, oldBillets, billetWeight, archive);
+    const total = st.passes.reduce((a, p) => a + (p.passNumber === prev ? 0 : (Number(p.tons) || 0)), 0) + split.finalOldPassTons;
+    const shiftKey = `${req.date}__${req.shift}`;
+
     if (req.newRollCode !== undefined) st.rollCode = req.newRollCode;
     if (req.newDiameter !== undefined && req.newDiameter !== '') st.diameter = req.newDiameter;
     if (req.newHardness !== undefined && req.newHardness !== '') st.hardness = req.newHardness;
     if (req.newType !== undefined && req.newType !== '') st.type = req.newType;
+    if (req.newMaxLimit !== undefined && Number(req.newMaxLimit) >= 100) st.maxLimit = Number(req.newMaxLimit);
     st.totalPasses = newTotalPasses;
     st.entryDate = req.date || new Date().toLocaleDateString('en-GB');
     st.lastResetDate = st.entryDate;
-    st.activePass = 1;
-    st.accumulatedTons = 0;
-    st.preCountedShifts = {};
-    st.passes = createPassesArray(newTotalPasses, 1, 0);
+    st.activePass = startPass;
+    st.accumulatedTons = split.newPassOpeningTons;
+    st.preCountedShifts = split.newPreCountedForShift > 0 ? { [shiftKey]: split.newPreCountedForShift } : {};
+    st.passes = createPassesArray(newTotalPasses, startPass, split.newPassOpeningTons);
 
     const specSummary = [
       st.diameter && `قطر ${st.diameter}`,
       st.hardness && `صلابة ${st.hardness}`,
-      `${newTotalPasses} ممر`
+      `${newTotalPasses} ممر`,
+      startPass > 1 && `يبدأ من ممر ${startPass}`
     ].filter(Boolean).join(' - ');
+    const billetNote = oldBillets > 0
+      ? (split.isShiftAlreadyLogged
+          ? ` — إضافة ${oldBillets} بليت للدرفيل القديم وتحويل باقي الوردية (${split.transferredNowBillets} بليت) للدرفيل الجديد`
+          : ` — إضافة ${oldBillets} بليت للدرفيل القديم (سيتم خصمها تلقائياً عند تسجيل ${req.shift})`)
+      : '';
 
     log = {
       ...base,
       kind: 'newRoll',
       fromPass: prev,
-      toPass: 1,
+      toPass: startPass,
       tons: total,
-      billetsAtChange: 0,
+      billetsAtChange: oldBillets,
       newDiameter: st.diameter,
       newTotalPasses,
-      notes: req.notes ? `${req.notes} (${specSummary})` : `تركيب درفيل جديد (${specSummary})`
+      notes: (req.notes ? `${req.notes} (${specSummary})` : `تركيب درفيل جديد (${specSummary})`) + billetNote
     };
   } else {
     const target = Number(req.targetPass) || prev;
@@ -645,6 +722,49 @@ const PercentControl = ({ value, onCommit }) => {
   );
 };
 
+/* الجلسة: التطبيق المثبّت على الموبايل بيتقفل ويتفتح كتير، فبنكمل بنفس الشخص خلال 12 ساعة من آخر فتح */
+const SESSION_KEY = 'gioshy_session';
+const SESSION_TTL = 12 * 60 * 60 * 1000;
+const saveSession = (uid) => { try { localStorage.setItem(SESSION_KEY, JSON.stringify({ uid, at: Date.now() })); } catch { /* ignore */ } };
+const clearSession = () => { try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } };
+
+/* التثبيت كتطبيق (PWA): بنلتقط حدث التثبيت بدري لأنه بييجي قبل ما شاشة الدخول تظهر */
+let installPromptEvent = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPromptEvent = e;
+    window.dispatchEvent(new Event('gioshy-installable'));
+  });
+  window.addEventListener('appinstalled', () => {
+    installPromptEvent = null;
+    window.dispatchEvent(new Event('gioshy-installable'));
+  });
+}
+const InstallButton = () => {
+  const [, force] = React.useState(0);
+  React.useEffect(() => {
+    const h = () => force(n => n + 1);
+    window.addEventListener('gioshy-installable', h);
+    return () => window.removeEventListener('gioshy-installable', h);
+  }, []);
+  const standalone = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  if (!installPromptEvent || standalone) return null;
+  const install = async () => {
+    const ev = installPromptEvent;
+    installPromptEvent = null;
+    ev.prompt();
+    try { await ev.userChoice; } catch { /* ignore */ }
+    force(n => n + 1);
+  };
+  return (
+    <button type="button" onClick={install}
+      className="w-full mt-3 flex items-center justify-center gap-2 p-2.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700/50 text-xs font-bold transition-colors">
+      <Download className="w-4 h-4" /> تثبيت التطبيق على الموبايل
+    </button>
+  );
+};
+
 /* توقيع فريق التطوير (شاشة الدخول + الشريط السفلي) */
 const Credits = ({ onClick, compact = false }) => (
   <button
@@ -722,6 +842,16 @@ function App() {
   const [alertPercent, setAlertPercent] = useState(80);
   const [alertExpanded, setAlertExpanded] = useState(false);
   const [passReportOpen, setPassReportOpen] = useState(false);
+  const [allocOpenFor, setAllocOpenFor] = useState(null);
+  const [allocRows, setAllocRows] = useState([]);
+  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityList, setActivityList] = useState([]);
   const backupInputRef = useRef(null);
@@ -756,7 +886,20 @@ function App() {
 
   const [newRollModal, setNewRollModal] = useState({ isOpen: false, standIndex: null });
   const [newRollForm, setNewRollForm] = useState({
-    rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6, notes: ''
+    rollCode: '', diameter: '', hardness: '', type: '', entryDate: '', totalPasses: 6, maxLimit: 1000, notes: '',
+    startPass: 1, shift: '', billets: ''
+  });
+
+  // نافذة تعديل سجل تغيير ممر (للأدمن / المدير عند المراجعة)
+  const [editChangeModal, setEditChangeModal] = useState({ isOpen: false, changeId: null, fromReview: false });
+  const [editChangeForm, setEditChangeForm] = useState({
+    standName: '', kind: 'pass', date: '', shift: '', fromPass: 1, toPass: 2,
+    tons: 0, billetsAtChange: 0, productSize: '16', notes: ''
+  });
+
+  // نافذة تعديل إنتاجية الممر (الشغال للأدمن / المنتهي للمدير والأدمن)
+  const [passTonsModal, setPassTonsModal] = useState({
+    isOpen: false, standIndex: null, passNumber: null, isCurrent: false, tonsInput: ''
   });
 
   const [resetModal, setResetModal] = useState({ isOpen: false, standIndex: null });
@@ -801,6 +944,30 @@ function App() {
     return () => unsub();
   }, []);
 
+  // استرجاع الجلسة: نفس الشخص يكمل من غير ما يكتب الكود تاني (بيشتغل حتى بدون نت من التخزين المحلي)
+  useEffect(() => {
+    if (!userAuth || !db || currentUser !== 'none') return;
+    let session = null;
+    try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { /* ignore */ }
+    if (!session || session.uid !== userAuth.uid || Date.now() - session.at > SESSION_TTL) return;
+    let cancelled = false;
+    getDoc(doc(db, 'users', userAuth.uid)).then((snap) => {
+      if (cancelled || !snap.exists()) return;
+      const u = snap.data();
+      const isAdminUser = u.role === 'admin';
+      setIsSuperAdmin(isAdminUser);
+      setLoggedUserInfo({
+        name: isAdminUser ? 'مسؤول النظام' : (u.name || ''),
+        roleTitle: isAdminUser ? 'أدمن' : (u.roleTitle || ROLE_TITLES[u.role] || 'فني'),
+        code: ''
+      });
+      setCurrentUser(u.role);
+      setActiveTab('dashboard');
+      saveSession(userAuth.uid);
+    }).catch(e => console.error('session restore:', e));
+    return () => { cancelled = true; };
+  }, [userAuth]);
+
   // بيانات المصنع: كل سجل في document مستقل، وبتتحمل بعد تسجيل الدخول فقط
   useEffect(() => {
     if (!userAuth || !db || !isLoggedIn) return;
@@ -816,8 +983,8 @@ function App() {
           setStands(normalizeList(snap.docs.map(d => d.data())));
         }
       }, listenerError('stands')),
-      onSnapshot(col('archive'), (snap) => setProductionArchive(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('archive')),
-      onSnapshot(col('passChanges'), (snap) => setPassChanges(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('passChanges')),
+      onSnapshot(query(col('archive'), orderBy('id', 'desc'), limit(90)), (snap) => setProductionArchive(snap.docs.map(d => d.data())), listenerError('archive')),
+      onSnapshot(query(col('passChanges'), orderBy('id', 'desc'), limit(120)), (snap) => setPassChanges(snap.docs.map(d => d.data())), listenerError('passChanges')),
       onSnapshot(col('pending'), (snap) => setPendingList(snap.docs.map(d => d.data()).sort(byIdDesc)), listenerError('pending')),
       onSnapshot(doc(db, 'factory', appId, 'settings', 'main'), (snap) => {
         if (!snap.exists()) return;
@@ -1029,12 +1196,14 @@ function App() {
           if (logo !== undefined) pub.logoUrl = logo;
           await setDoc(doc(db, 'config', 'public'), pub, { merge: true });
         }
+        return true;
       } catch (e) {
         console.error("Save error:", e);
         const denied = e && e.code === 'permission-denied';
         showAlert('لم يتم الحفظ', denied
           ? 'مفيش صلاحية لحفظ التغيير ده. اتأكد من تسجيل الدخول.'
           : 'حصلت مشكلة أثناء الحفظ. اتأكد من الاتصال بالإنترنت وجرب تاني، وما تعتمدش إن التسجيل اتحفظ.');
+        return false;
       }
     } else {
       if (s !== undefined) setStands(s);
@@ -1046,6 +1215,7 @@ function App() {
       if (productSize !== undefined) setSelectedProductSize(productSize);
       if (alertPct !== undefined) setAlertPercent(alertPct);
       if (admin !== undefined) setAdminState(prev => ({ ...prev, ...admin }));
+      return true;
     }
   };
 
@@ -1306,7 +1476,11 @@ function App() {
       type: st.type || '',
       entryDate: formatDateToISO(currentProdDate),
       totalPasses: st.totalPasses || 6,
-      notes: ''
+      maxLimit: st.maxLimit || 1000,
+      notes: '',
+      startPass: 1,
+      shift: selectedShift,
+      billets: ''
     });
     setNewRollModal({ isOpen: true, standIndex: idx });
   };
@@ -1324,6 +1498,10 @@ function App() {
       newHardness: newRollForm.hardness.trim(),
       newType: newRollForm.type.trim(),
       newTotalPasses: Math.max(1, Math.min(40, Number(newRollForm.totalPasses) || st.totalPasses)),
+      newMaxLimit: Math.max(100, Number(newRollForm.maxLimit) || st.maxLimit || 1000),
+      startPass: Math.max(1, Math.min(Math.max(1, Math.min(40, Number(newRollForm.totalPasses) || st.totalPasses)), Math.floor(Number(newRollForm.startPass)) || 1)),
+      shift: newRollForm.shift || selectedShift,
+      billets: Number(newRollForm.billets) || 0,
       notes: newRollForm.notes.trim() || 'تركيب درفيل جديد'
     });
     submitChange(req);
@@ -1341,6 +1519,97 @@ function App() {
     });
     ns[standIdx] = st;
     save({ stands: ns });
+  };
+
+  const openPassTonsModal = (standIndex, passNumber, currentTons, isCurrent) => {
+    if (isCurrent && !isAdminRole) return;
+    if (!isCurrent && !isManagerLike) return;
+    setPassTonsModal({
+      isOpen: true,
+      standIndex,
+      passNumber,
+      isCurrent,
+      tonsInput: String(Number(currentTons || 0))
+    });
+  };
+
+  const handleSavePassTons = (e) => {
+    e.preventDefault();
+    const { standIndex, passNumber, isCurrent, tonsInput } = passTonsModal;
+    if (standIndex === null || passNumber === null) return;
+    const val = Math.max(0, Number(tonsInput));
+    if (isNaN(val)) { showAlert('قيمة غير صحيحة', 'أدخل رقماً صحيحاً للإنتاجية بالطن.'); return; }
+
+    if (isCurrent) {
+      if (!isAdminRole) return;
+      const ns = [...stands];
+      const st = { ...ns[standIndex] };
+      st.accumulatedTons = val;
+      st.passes = st.passes.map(p => p.passNumber === passNumber ? { ...p, status: 'active', tons: val, order: p.order || 1 } : p);
+      ns[standIndex] = st;
+      save({ stands: ns, label: `تعديل إنتاجية الممر الشغال (${st.name} - ممر ${passNumber}: ${val} طن)` });
+    } else {
+      handleDirectPassStatusChange(standIndex, passNumber, val > 0 ? 'used' : 'unused', val);
+    }
+    setPassTonsModal({ isOpen: false, standIndex: null, passNumber: null, isCurrent: false, tonsInput: '' });
+  };
+
+  /* ---------- تعديل وحذف تغييرة ممر معينة (للأدمن / المدير عند المراجعة) ---------- */
+  const openEditPassChange = (c, fromReview = false) => {
+    if (!isAdminRole && !(fromReview && isManagerLike)) return;
+    setEditChangeForm({
+      standName: c.standName || `ستاند ${c.standId}`,
+      kind: c.kind || 'pass',
+      date: convertGBToISO(c.date),
+      shift: c.shift || SHIFTS_NORMAL[0],
+      fromPass: c.fromPass ?? 1,
+      toPass: c.toPass ?? 1,
+      tons: Number(c.tons || 0),
+      billetsAtChange: Number(c.billetsAtChange || 0),
+      productSize: String(c.productSize || selectedProductSize),
+      notes: c.notes || ''
+    });
+    setEditChangeModal({ isOpen: true, changeId: c.id, fromReview });
+  };
+
+  const handleSavePassChange = (e) => {
+    e.preventDefault();
+    const { changeId, fromReview } = editChangeModal;
+    if (!changeId) return;
+    const updated = passChanges.map(x => {
+      if (x.id !== changeId) return x;
+      return {
+        ...x,
+        date: formatDateToGB(editChangeForm.date) || x.date,
+        shift: editChangeForm.shift || x.shift,
+        fromPass: Number(editChangeForm.fromPass) || x.fromPass,
+        toPass: Number(editChangeForm.toPass) || x.toPass,
+        tons: Math.max(0, Number(editChangeForm.tons) || 0),
+        billetsAtChange: Math.max(0, Number(editChangeForm.billetsAtChange) || 0),
+        productSize: editChangeForm.productSize || x.productSize,
+        notes: editChangeForm.notes,
+        ...(fromReview ? { needsReview: false, reviewedBy: roleLabel, reviewedAt: new Date().toLocaleString('ar-EG'), approvedBy: `معتمد بعد التعديل (${roleLabel})` } : { editedBy: roleLabel })
+      };
+    });
+    save({ changes: updated, label: `تعديل سجل تغيير ممر (${editChangeForm.standName})` });
+    setEditChangeModal({ isOpen: false, changeId: null, fromReview: false });
+  };
+
+  const handleDeletePassChange = (c, fromReview = false) => {
+    if (!isAdminRole && !(fromReview && isManagerLike)) return;
+    const desc = c.kind === 'newRoll' ? 'تركيب درفيل جديد' : `ممر ${c.fromPass} ← ممر ${c.toPass}`;
+    showConfirm(
+      fromReview ? 'رفض وحذف التغيير' : 'حذف تغييرة ممر',
+      `هل أنت متأكد من حذف هذا السجل (${c.standName || `ستاند ${c.standId}`} - ${desc} - بتاريخ ${c.date})؟
+
+ملاحظة: لو الستاند محتاج يرجع للممر القديم أو تعديل إنتاجيته، تقدر تعدله من صفحة الدرفيل.`,
+      () => {
+        save({
+          changes: passChanges.filter(x => x.id !== c.id),
+          label: `${fromReview ? 'رفض وحذف تغيير مباشر' : 'حذف تغييرة ممر'} (${c.standName || `ستاند ${c.standId}`}: ${desc})`
+        });
+      }
+    );
   };
 
   const initiateResetStand = (index, preselectedPassNum = null, e = null) => {
@@ -1361,7 +1630,7 @@ function App() {
   const handleResetDateChange = (e) => {
     const nd = e.target.value;
     setResetDateInput(nd);
-    const valid = shiftsFor(new Date(nd).getDay() === 5);
+    const valid = shiftsFor(isISODateFriday(nd));
     if (!valid.includes(resetShiftInput)) setResetShiftInput(valid[0]);
   };
 
@@ -1390,7 +1659,11 @@ function App() {
     newHardness: r.newHardness ?? '',
     newType: r.newType ?? '',
     newTotalPasses: r.newTotalPasses ?? 6,
+    newMaxLimit: r.newMaxLimit ?? '',
+    startPass: r.startPass ?? 1,
     date: r.date,
+    shift: r.shift,
+    rejectReason: '',
     ...(reqEdits[r.id] || {})
   });
   const setEdit = (id, patch) => setReqEdits(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
@@ -1404,7 +1677,8 @@ function App() {
     save({ stands: res.list, changes: [res.log, ...passChanges], pending: pendingList.filter(x => x.id !== r.id) });
   };
   const rejectRequest = (r) => {
-    save({ pending: pendingList.map(x => x.id === r.id ? { ...x, status: 'rejected', rejectedAt: new Date().toLocaleString('ar-EG'), rejectedBy: roleLabel } : x) });
+    const reason = String((reqEdits[r.id] || {}).rejectReason || '').trim();
+    save({ pending: pendingList.map(x => x.id === r.id ? { ...x, status: 'rejected', rejectedAt: new Date().toLocaleString('ar-EG'), rejectedBy: roleLabel, ...(reason ? { rejectReason: reason } : {}) } : x) });
   };
   const dismissRequest = (id) => save({ pending: pendingList.filter(x => x.id !== id) });
 
@@ -1440,6 +1714,28 @@ function App() {
     if (val > 0) save({ stands: stands.map((s, i) => i === index ? { ...s, maxLimit: val } : s) });
   };
   const handleWeightChange = (v) => { const val = Number(v); if (val >= 0.1 && val <= 5) save({ weight: val }); };
+  /* تخصيص عدد ممرات لمنتج معين (للأدمن) */
+  const handleSaveAlloc = () => {
+    const st = stands[rollModal.standIndex];
+    if (!st || !isAdminRole) return;
+    const rows = allocRows
+      .map(r => ({ label: String(r.label || '').replace(/\s+/g, ''), count: Math.floor(Number(r.count)) }))
+      .filter(r => r.label || r.count);
+    if (rows.some(r => !r.label || !(r.count > 0))) { showAlert('بيانات ناقصة', 'اكتب المنتج وعدد الممرات لكل سطر.'); return; }
+    if (rows.some(r => !/^\d+(-\d+)*$/.test(r.label))) { showAlert('مقاس غير صحيح', 'اكتب المقاس بالأرقام فقط، ولو أكتر من مقاس افصل بينهم بشرطة مثل 12-16-18.'); return; }
+    const total = rows.reduce((a, r) => a + r.count, 0);
+    if (total > st.totalPasses) { showAlert('عدد غير صحيح', `إجمالي الممرات الموزعة (${total}) أكبر من عدد ممرات الستاند (${st.totalPasses}).`); return; }
+    save({
+      stands: stands.map((s, i) => {
+        if (i !== rollModal.standIndex) return s;
+        if (rows.length) return { ...s, productAlloc: rows };
+        const { productAlloc, ...rest } = s;
+        return rest;
+      }),
+      label: `تخصيص ممرات ${st.name} لمنتجات`
+    });
+    setAllocOpenFor(null);
+  };
   const handleAlertPercentChange = (v) => { const n = Math.round(Number(v)); if (n >= 50 && n <= 100) save({ alertPct: n }); };
 
   /* ---------- النسخ الاحتياطي (للأدمن) ---------- */
@@ -1510,7 +1806,7 @@ function App() {
     commitShift('add');
   };
 
-  const commitShift = (mode) => {
+  const commitShift = async (mode) => {
     setDupModal(false);
     const n = Number(shiftBillets);
     if (n <= 0 || isNaN(n)) return;
@@ -1561,7 +1857,8 @@ function App() {
       archive = [{ id: Date.now(), date: currentDateStr, dayName, time: saveTime, shift: selectedShift,
         billets: n, tons: newTons, productSize: selectedProductSize, recordedBy: roleLabel, timestamp: now.getTime() }, ...productionArchive];
     }
-    save({ stands: newStands, archive });
+    const ok = await save({ stands: newStands, archive });
+    if (!ok) return;
 
     const dayShifts = shiftsFor(currentProdDate.getDay() === 5);
     const i = dayShifts.indexOf(selectedShift);
@@ -1617,6 +1914,7 @@ function App() {
 
       writeGuard({ fails: 0, until: 0 });
       logActivity('تسجيل دخول', '', u.role === 'admin' ? 'مسؤول النظام' : (u.name || ''), u.role);
+      saveSession(cred.user.uid);
       const isAdminUser = u.role === 'admin';
       setIsSuperAdmin(isAdminUser);
       setLoggedUserInfo({
@@ -1658,6 +1956,7 @@ function App() {
     if (role === 'admin') setActiveTab('admin'); else if (activeTab === 'admin') setActiveTab('dashboard');
   };
   const handleLogout = () => {
+    clearSession();
     if (auth) signOut(auth).catch(e => console.error(e));
     setCurrentUser('none');
     setLoggedUserInfo({ name: '', roleTitle: '', code: '' });
@@ -1830,7 +2129,9 @@ function App() {
               <Wrench className="w-5 h-5 text-amber-400 animate-bounce" /><span>{adminState.maintenanceMessage}</span>
             </div>
           ) : (
-            <p className="text-blue-400 mb-6 text-xs flex items-center justify-center gap-1 font-bold"><CheckCircle className="w-4 h-4" /> نظام متصل بالسحابة لحظياً</p>
+            online
+              ? <p className="text-blue-400 mb-6 text-xs flex items-center justify-center gap-1 font-bold"><CheckCircle className="w-4 h-4" /> نظام متصل بالسحابة لحظياً</p>
+              : <p className="text-amber-400 mb-6 text-xs flex items-center justify-center gap-1 font-bold"><AlertTriangle className="w-4 h-4" /> غير متصل بالإنترنت</p>
           )}
           {!isDataLoaded ? (
             <div className="text-slate-400 animate-pulse text-sm font-bold">جاري الاتصال بقاعدة البيانات...</div>
@@ -1848,6 +2149,7 @@ function App() {
                 className={`w-full flex items-center justify-center gap-2 p-3.5 rounded-lg font-bold transition-colors shadow-lg ${adminState.isMaintenance || !quickCode.trim() ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
                 <Key className="w-5 h-5" /> {quickBusy ? 'جاري التحقق...' : 'دخول'}
               </button>
+              <InstallButton />
             </form>
           )}
 
@@ -1860,7 +2162,7 @@ function App() {
     );
   }
 
-  const isResetDateFriday = resetDateInput ? new Date(resetDateInput).getDay() === 5 : false;
+  const isResetDateFriday = isISODateFriday(resetDateInput);
   const resetModalShifts = shiftsFor(isResetDateFriday);
   const selectedRollStand = rollModal.standIndex !== null ? stands[rollModal.standIndex] : null;
   const resetStandObj = resetModal.standIndex !== null ? stands[resetModal.standIndex] : null;
@@ -1877,6 +2179,15 @@ function App() {
       )
     : null;
 
+  const newRollIsFriday = isISODateFriday(newRollForm.entryDate);
+  const newRollShifts = shiftsFor(newRollIsFriday);
+  const newRollPreview = newRollStandObj
+    ? computePassSplit(newRollStandObj, formatDateToGB(newRollForm.entryDate) || currentDateStr, newRollForm.shift, newRollForm.billets, billetWeight, productionArchive)
+    : null;
+  const newRollOldTotal = newRollStandObj && newRollPreview
+    ? newRollStandObj.passes.reduce((a, p) => a + (p.passNumber === newRollStandObj.activePass ? 0 : (Number(p.tons) || 0)), 0) + newRollPreview.finalOldPassTons
+    : 0;
+
   const greenCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) < 0.8).length;
   const warnCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 0.8 && (s.accumulatedTons / s.maxLimit) < 1).length;
   const dangerCount = stands.filter(s => (s.accumulatedTons / s.maxLimit) >= 1).length;
@@ -1887,6 +2198,12 @@ function App() {
     ====================================================== */
   return (
     <div className="h-dvh bg-slate-200 text-slate-900 font-sans flex flex-col p-1 gap-1 overflow-hidden" dir="rtl">
+
+      {!online && (
+        <div className="flex-none bg-amber-500 text-slate-950 text-[11px] font-black text-center py-1 px-2 rounded-lg">
+          غير متصل بالإنترنت — شغلك محفوظ على الجهاز وهيتبعت أول ما النت يرجع
+        </div>
+      )}
 
       {/* تنبيه / تأكيد */}
       {modal.isOpen && (
@@ -2203,11 +2520,80 @@ function App() {
                   <input
                     type="date"
                     value={newRollForm.entryDate}
-                    onChange={e => setNewRollForm({ ...newRollForm, entryDate: e.target.value })}
+                    onChange={e => {
+                      const d = e.target.value;
+                      const valid = shiftsFor(isISODateFriday(d));
+                      setNewRollForm({ ...newRollForm, entryDate: d, shift: valid.includes(newRollForm.shift) ? newRollForm.shift : valid[0] });
+                    }}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الممر اللي هيشتغل عليه:</label>
+                  <select
+                    value={newRollForm.startPass}
+                    onChange={e => setNewRollForm({ ...newRollForm, startPass: Number(e.target.value) })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono bg-white outline-none focus:border-blue-500"
+                  >
+                    {Array.from({ length: Math.max(1, Math.min(40, Number(newRollForm.totalPasses) || 1)) }, (_, i) => i + 1).map(n => (
+                      <option key={n} value={n}>ممر {n}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الوردية اللي تم فيها التغيير:</label>
+                  <select
+                    value={newRollForm.shift}
+                    onChange={e => setNewRollForm({ ...newRollForm, shift: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold bg-white outline-none focus:border-blue-500"
+                  >
+                    {newRollShifts.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الحد الأقصى للممر (طن):</label>
+                  <input
+                    type="number" min="100"
+                    value={newRollForm.maxLimit}
+                    onChange={e => setNewRollForm({ ...newRollForm, maxLimit: e.target.value })}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-700 block mb-1">
+                  عدد البليت اللي اشتغله الدرفيل القديم (ممر {newRollStandObj.activePass}) في بداية ({newRollForm.shift}) قبل التغيير:
+                </label>
+                <input
+                  type="number" min="0"
+                  value={newRollForm.billets}
+                  onChange={e => setNewRollForm({ ...newRollForm, billets: e.target.value })}
+                  placeholder="مثال: 12 بليت (سيب فاضي لو التغيير بعد انتهاء الوردية)"
+                  className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+              {newRollPreview && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] flex flex-col gap-1.5">
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-600">إجمالي إنتاج الدرفيل القديم:</span>
+                    <span className="font-mono font-black text-blue-700">{newRollOldTotal.toFixed(1)} طن</span>
+                  </div>
+                  <div className="flex justify-between items-center font-bold">
+                    <span className="text-slate-600">افتتاحية الممر {newRollForm.startPass} على الدرفيل الجديد:</span>
+                    <span className="font-mono font-black text-emerald-700">{newRollPreview.newPassOpeningTons.toFixed(1)} طن</span>
+                  </div>
+                  {Number(newRollForm.billets) > 0 && (
+                    <div className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded p-1.5 leading-relaxed">
+                      {newRollPreview.isShiftAlreadyLogged
+                        ? `✓ ${newRollForm.shift} مسجلة بالفعل: يتم إضافة ${Number(newRollForm.billets)} بليت للدرفيل القديم وتحويل باقي الوردية (${newRollPreview.transferredNowBillets} بليت) للدرفيل الجديد.`
+                        : `⏳ ${newRollForm.shift} لم تسجل بعد: تتضاف ${Number(newRollForm.billets)} بليت للدرفيل القديم فوراً، وعند تسجيل الوردية بتتخصم تلقائياً ويتحسب الباقي للدرفيل الجديد.`}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="text-[10px] font-bold text-slate-700 block mb-1">ملاحظات أو سبب تغيير الدرفيل:</label>
@@ -2286,6 +2672,7 @@ function App() {
                       {r.status === 'pending' ? <Hourglass className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
                       {r.status === 'pending' ? `بانتظار موافقة المدير (طلب: ${r.requestedBy}): ` : 'المدير رفض الطلب: '}
                       {r.kind === 'newRoll' ? `تركيب درفيل جديد (قطر ${r.newDiameter || '-'})` : `نقل من ممر ${r.fromPass} إلى ممر ${r.targetPass}`}
+                      {r.status === 'rejected' && r.rejectReason ? ` — السبب: ${r.rejectReason}` : ''}
                     </span>
                     {r.status === 'rejected' && <button onClick={() => dismissRequest(r.id)} className="bg-white border border-red-300 px-2 py-0.5 rounded text-[10px]">حسناً</button>}
                   </div>
@@ -2341,6 +2728,68 @@ function App() {
                 )}
 
                 <div className="bg-white p-3 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><Sliders className="w-4 h-4 text-indigo-600" /> توزيع الممرات على المنتجات</h4>
+                    {isAdminRole && (
+                      <button
+                        onClick={() => {
+                          if (allocOpenFor === String(st.id)) { setAllocOpenFor(null); return; }
+                          const segs = allocSegments(st);
+                          setAllocRows(segs.length ? segs.map(a => ({ label: String(a.label), count: String(a.count) })) : [{ label: '', count: '' }]);
+                          setAllocOpenFor(String(st.id));
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-1 rounded-lg text-[11px] border border-slate-300">
+                        {allocOpenFor === String(st.id) ? 'إغلاق' : 'تعديل التوزيع'}
+                      </button>
+                    )}
+                  </div>
+                  {allocOpenFor !== String(st.id) && (
+                    allocSegments(st).length === 0
+                      ? <p className="text-[11px] text-slate-400 font-bold">لم يتم تخصيص ممرات لمنتجات.</p>
+                      : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {(() => {
+                            let from = 1;
+                            return allocSegments(st).map((a, i) => {
+                              const f = from; from += Number(a.count);
+                              return (
+                                <span key={i} className="px-2 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900 text-[11px] font-black">
+                                  {a.label} مم: ممر {f}{Number(a.count) > 1 ? ` إلى ${from - 1}` : ''}
+                                </span>
+                              );
+                            });
+                          })()}
+                        </div>
+                      )
+                  )}
+                  {allocOpenFor === String(st.id) && isAdminRole && (
+                    <div className="flex flex-col gap-2">
+                      {allocRows.map((r, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <input value={r.label} onChange={e => setAllocRows(allocRows.map((x, k) => k === i ? { ...x, label: e.target.value } : x))}
+                            placeholder="المنتج: 10 أو 12-16-18" className="flex-1 min-w-0 p-1.5 rounded border border-slate-300 text-xs font-mono" />
+                          <input type="number" min="1" max={st.totalPasses} value={r.count} onChange={e => setAllocRows(allocRows.map((x, k) => k === i ? { ...x, count: e.target.value } : x))}
+                            placeholder="عدد الممرات" className="w-24 p-1.5 rounded border border-slate-300 text-xs font-mono text-center" />
+                          <button onClick={() => setAllocRows(allocRows.filter((_, k) => k !== i))} className="text-red-600 hover:bg-red-50 rounded p-1.5"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                      {(() => {
+                        const sum = allocRows.reduce((a, r) => a + (Math.floor(Number(r.count)) || 0), 0);
+                        return (
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <span className={`text-[11px] font-bold ${sum > st.totalPasses ? 'text-red-600' : 'text-slate-500'}`}>الموزّع: {sum} من {st.totalPasses} ممر</span>
+                            <div className="flex gap-2">
+                              <button onClick={() => setAllocRows([...allocRows, { label: '', count: '' }])} className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-1 rounded-lg text-[11px] border border-slate-300 flex items-center gap-1"><Plus className="w-3 h-3" /> منتج</button>
+                              <button onClick={handleSaveAlloc} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-1 rounded-lg text-[11px] flex items-center gap-1 shadow"><Save className="w-3 h-3" /> حفظ التوزيع</button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white p-3 rounded-xl border border-slate-200">
                   <h4 className="text-xs font-black text-slate-800 mb-2 flex items-center gap-1.5"><Layers className="w-4 h-4 text-blue-600" /> تسلسل تشغيل الممرات</h4>
                   {ordered.length === 0 ? <p className="text-[11px] text-slate-400 font-bold">لم يبدأ التشغيل بعد.</p> : (
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -2371,9 +2820,20 @@ function App() {
                   {st.passes.map(p => {
                     const isCurrent = p.status === 'active' || p.passNumber === st.activePass;
                     const isUsed = !isCurrent && p.status === 'used';
+                    const pLabel = passLabelOf(st, p.passNumber);
+                    const isMatch = pLabel && labelHasSize(pLabel, selectedProductSize);
                     return (
                       <div key={p.passNumber} onClick={() => { if (!isCurrent) initiateResetStand(rollModal.standIndex, p.passNumber); }}
-                        className={`rounded-xl border-2 p-2 flex flex-col gap-1.5 transition-all relative ${isCurrent ? 'bg-slate-900 text-white border-amber-400 shadow-lg' : isUsed ? 'bg-blue-50 text-blue-950 border-blue-300 hover:bg-blue-100 cursor-pointer' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400 cursor-pointer'}`}>
+                        className={`rounded-xl border-2 p-2 flex flex-col gap-1 transition-all relative ${isCurrent ? 'bg-slate-900 text-white border-amber-400 shadow-lg' : isUsed ? 'bg-blue-50 text-blue-950 border-blue-300 hover:bg-blue-100 cursor-pointer' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400 cursor-pointer'}`}>
+                        {pLabel && (
+                          <div className={`text-center text-[9px] font-black py-0.5 px-1 rounded-md -mt-0.5 mb-0.5 border ${
+                            isMatch
+                              ? 'bg-indigo-600 text-white border-indigo-700'
+                              : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                          }`}>
+                            مقاس {pLabel} مم
+                          </div>
+                        )}
                         <div className="flex justify-between items-center">
                           <span className="font-black text-xs">ممر {p.passNumber}</span>
                           {p.order && <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 rounded">#{p.order}</span>}
@@ -2385,10 +2845,24 @@ function App() {
                         <span className={`text-center text-[9px] font-bold py-0.5 rounded ${isCurrent ? 'bg-amber-400 text-slate-950' : isUsed ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
                           {isCurrent ? 'شغال حالياً' : isUsed ? 'منتهي' : 'جديد'}
                         </span>
+                        {isCurrent && isAdminRole && (
+                          <div className="flex gap-1 pt-1 border-t border-amber-400/30" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => openPassTonsModal(rollModal.standIndex, p.passNumber, st.accumulatedTons, true)}
+                              className="text-[9px] bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-400/40 px-1.5 py-0.5 rounded font-bold flex-1"
+                            >
+                              تعديل الإنتاجية
+                            </button>
+                          </div>
+                        )}
                         {isManagerLike && !isCurrent && (
                           <div className="flex gap-1 pt-1 border-t border-slate-300/60" onClick={e => e.stopPropagation()}>
-                            <button onClick={() => { const v = prompt(`أدخل الإنتاج التراكمي للممر رقم ${p.passNumber} (بالطن):`, p.tons || 0); if (v !== null) handleDirectPassStatusChange(rollModal.standIndex, p.passNumber, Number(v) > 0 ? 'used' : 'unused', Number(v)); }}
-                              className="text-[9px] bg-slate-200 hover:bg-slate-300 text-slate-800 px-1.5 py-0.5 rounded font-bold flex-1">تعديل</button>
+                            <button
+                              onClick={() => openPassTonsModal(rollModal.standIndex, p.passNumber, p.tons || 0, false)}
+                              className="text-[9px] bg-slate-200 hover:bg-slate-300 text-slate-800 px-1.5 py-0.5 rounded font-bold flex-1"
+                            >
+                              تعديل
+                            </button>
                             {isUsed && <button onClick={() => handleDirectPassStatusChange(rollModal.standIndex, p.passNumber, 'unused', 0)} className="text-[9px] bg-red-100 hover:bg-red-200 text-red-700 px-1.5 py-0.5 rounded font-bold">تصفير</button>}
                           </div>
                         )}
@@ -2411,6 +2885,15 @@ function App() {
               <button onClick={() => setResetModal({ isOpen: false, standIndex: null })} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-4 flex flex-col gap-3 overflow-y-auto">
+              {(() => {
+                const lbl = passLabelOf(resetStandObj, Number(resetTargetPass));
+                if (!lbl || labelHasSize(lbl, selectedProductSize)) return null;
+                return (
+                  <div className="bg-orange-50 border border-orange-300 text-orange-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0" /> الممر {resetTargetPass} مخصص لمنتج ({lbl} مم) والمقاس الحالي {selectedProductSize} مم.
+                  </div>
+                );
+              })()}
               {!canApplyDirect(resetStandObj.id) && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold p-2 rounded-lg flex items-start gap-1.5">
                   <Hourglass className="w-4 h-4 shrink-0" /> التغيير هيتبعت باسم ({roleLabel}) للمدير للموافقة، ومش هيتنفذ إلا بعد اعتماده.
@@ -2432,9 +2915,15 @@ function App() {
                     const sel = Number(resetTargetPass) === p.passNumber;
                     const cur = p.passNumber === resetStandObj.activePass;
                     const used = p.status === 'used' && !cur;
+                    const pLabel = passLabelOf(resetStandObj, p.passNumber);
                     return (
                       <button type="button" key={p.passNumber} onClick={() => setResetTargetPass(p.passNumber)}
-                        className={`p-1.5 rounded-lg font-mono text-xs font-black border-2 flex flex-col items-center transition-all ${sel ? 'bg-emerald-600 text-white border-emerald-900 shadow-md scale-105' : cur ? 'bg-slate-900 text-amber-400 border-amber-400' : used ? 'bg-blue-100 text-blue-900 border-blue-300 opacity-80' : 'bg-white text-slate-800 border-slate-300 hover:border-blue-500'}`}>
+                        className={`p-1 rounded-lg font-mono text-xs font-black border-2 flex flex-col items-center transition-all ${sel ? 'bg-emerald-600 text-white border-emerald-900 shadow-md scale-105' : cur ? 'bg-slate-900 text-amber-400 border-amber-400' : used ? 'bg-blue-100 text-blue-900 border-blue-300 opacity-80' : 'bg-white text-slate-800 border-slate-300 hover:border-blue-500'}`}>
+                        {pLabel && (
+                          <span className={`text-[7px] font-sans font-black px-1 rounded mb-0.5 leading-tight ${sel ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-800'}`}>
+                            {pLabel}مم
+                          </span>
+                        )}
                         <span>{p.passNumber}</span>
                         <span className="text-[8px] font-normal opacity-80">{cur ? 'الحالي' : used ? `${Number(p.tons).toFixed(0)}ط` : 'جديد'}</span>
                       </button>
@@ -2506,9 +2995,12 @@ function App() {
               {pendingList.filter(r => r.status === 'pending').map(r => {
                 const st = stands.find(s => String(s.id) === String(r.standId));
                 const ed = getEdit(r);
-                const preview = st && r.kind === 'pass'
-                  ? computePassSplit(st, r.date, r.shift, ed.billets, billetWeight, productionArchive)
+                const preview = st
+                  ? computePassSplit(st, ed.date || r.date, ed.shift || r.shift, ed.billets, billetWeight, productionArchive)
                   : null;
+                const rollOldTotal = st && preview && r.kind === 'newRoll'
+                  ? st.passes.reduce((a, p) => a + (p.passNumber === st.activePass ? 0 : (Number(p.tons) || 0)), 0) + preview.finalOldPassTons
+                  : 0;
                 return (
                   <div key={r.id} className="bg-white border border-slate-200 rounded-xl p-3 flex flex-col gap-2 shadow-sm">
                     <div className="flex justify-between items-center flex-wrap gap-1">
@@ -2525,9 +3017,19 @@ function App() {
                             <select value={ed.targetPass} onChange={e => setEdit(r.id, { targetPass: Number(e.target.value) })} className="w-full border border-slate-300 rounded p-1.5 font-mono bg-white">
                               {st && st.passes.map(p => <option key={p.passNumber} value={p.passNumber}>ممر {p.passNumber}</option>)}
                             </select></div>
-                          <div><label className="block text-slate-600 mb-0.5">بليت الممر القديم في {r.shift}:</label>
-                            <input type="number" value={ed.billets} onChange={e => setEdit(r.id, { billets: e.target.value })} className="w-full border border-slate-300 rounded p-1.5 font-mono" /></div>
-                          <div className="col-span-2 sm:col-span-1"><label className="block text-slate-600 mb-0.5">ملاحظات:</label>
+                          <div><label className="block text-slate-600 mb-0.5">بليت الممر القديم:</label>
+                            <input type="number" min="0" value={ed.billets} onChange={e => setEdit(r.id, { billets: e.target.value })} className="w-full border border-slate-300 rounded p-1.5 font-mono" /></div>
+                          <div><label className="block text-slate-600 mb-0.5">التاريخ:</label>
+                            <input type="date" value={convertGBToISO(ed.date || r.date)} onChange={e => {
+                              const iso = e.target.value;
+                              const valid = shiftsFor(isISODateFriday(iso));
+                              setEdit(r.id, { date: formatDateToGB(iso), shift: valid.includes(ed.shift) ? ed.shift : valid[0] });
+                            }} className="w-full border border-slate-300 rounded p-1.5 font-mono bg-white" /></div>
+                          <div><label className="block text-slate-600 mb-0.5">الوردية:</label>
+                            <select value={ed.shift || r.shift} onChange={e => setEdit(r.id, { shift: e.target.value })} className="w-full border border-slate-300 rounded p-1.5 bg-white">
+                              {shiftsFor(isISODateFriday(convertGBToISO(ed.date || r.date))).map(s => <option key={s} value={s}>{s}</option>)}
+                            </select></div>
+                          <div className="col-span-2"><label className="block text-slate-600 mb-0.5">ملاحظات:</label>
                             <input type="text" value={ed.notes || ''} onChange={e => setEdit(r.id, { notes: e.target.value })} className="w-full border border-slate-300 rounded p-1.5" /></div>
                         </div>
                         {preview && (
@@ -2558,8 +3060,32 @@ function App() {
                           <label className="block text-slate-600 mb-0.5">كود الدرفيل:</label>
                           <input type="text" value={ed.newRollCode} onChange={e => setEdit(r.id, { newRollCode: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
                         </div>
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">يبدأ من ممر:</label>
+                          <select value={ed.startPass} onChange={e => setEdit(r.id, { startPass: Number(e.target.value) })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white">
+                            {Array.from({ length: Math.max(1, Math.min(40, Number(ed.newTotalPasses) || 1)) }, (_, i) => i + 1).map(n => <option key={n} value={n}>ممر {n}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-slate-600 mb-0.5">بليت القديم في {r.shift}:</label>
+                          <input type="number" min="0" value={ed.billets ?? ''} onChange={e => setEdit(r.id, { billets: e.target.value })} className="w-full border border-slate-300 rounded p-1 font-mono bg-white" />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-slate-600 mb-0.5">ملاحظات:</label>
+                          <input type="text" value={ed.notes || ''} onChange={e => setEdit(r.id, { notes: e.target.value })} className="w-full border border-slate-300 rounded p-1 bg-white" />
+                        </div>
                       </div>
                     )}
+                    {r.kind === 'newRoll' && preview && (
+                      <div className="bg-blue-50 border border-blue-200 rounded p-2 text-[10px] font-bold text-blue-900 flex flex-wrap justify-between gap-2">
+                        <span>إجمالي إنتاج الدرفيل القديم: <strong className="font-mono">{rollOldTotal.toFixed(1)} طن</strong></span>
+                        <span>افتتاحية ممر {ed.startPass}: <strong className="font-mono">{preview.newPassOpeningTons.toFixed(1)} طن</strong></span>
+                        {!preview.isShiftAlreadyLogged && Number(ed.billets) > 0 && (
+                          <span className="text-amber-800 w-full">سيتم خصم {Number(ed.billets)} بليت تلقائياً عند تسجيل {r.shift}</span>
+                        )}
+                      </div>
+                    )}
+                    <input type="text" value={ed.rejectReason || ''} onChange={e => setEdit(r.id, { rejectReason: e.target.value })} placeholder="سبب الرفض (اختياري، بيظهر لصاحب الطلب)" className="w-full border border-slate-200 rounded p-1.5 text-[10px] bg-slate-50" />
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => rejectRequest(r)} className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> رفض</button>
                       <button onClick={() => approveRequest(r)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow"><Check className="w-3.5 h-3.5" /> اعتماد التنفيذ</button>
@@ -2588,8 +3114,9 @@ function App() {
                     <span>بليت إضافي: {c.billetsAtChange || 0}</span>
                   </div>
                   {c.notes && <div className="text-[10px] text-slate-600 font-bold">{c.notes}</div>}
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={() => editStandFromReview(c)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> تعديل</button>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button onClick={() => handleDeletePassChange(c, true)} className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> رفض وحذف</button>
+                    <button onClick={() => openEditPassChange(c, true)} className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" /> تعديل التغيير</button>
                     <button onClick={() => confirmReviewedChange(c)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow"><Check className="w-3.5 h-3.5" /> تأكيد</button>
                   </div>
                 </div>
@@ -2655,6 +3182,146 @@ function App() {
         </Overlay>
       )}
 
+      {/* ===== نافذة تعديل إنتاجية الممر (الشغال للأدمن / المنتهي للمدير والأدمن) ===== */}
+      {passTonsModal.isOpen && (
+        <Overlay z={95}>
+          <form onSubmit={handleSavePassTons} className="bg-white rounded-xl shadow-2xl w-full max-w-xs overflow-hidden border border-slate-300">
+            <div className="bg-slate-900 p-3 flex justify-between items-center text-white">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-amber-400" />
+                {passTonsModal.isCurrent ? `تعديل إنتاجية الممر الشغال (${passTonsModal.passNumber})` : `تعديل إنتاجية ممر ${passTonsModal.passNumber}`}
+              </h3>
+              <button type="button" onClick={() => setPassTonsModal({ isOpen: false, standIndex: null, passNumber: null, isCurrent: false, tonsInput: '' })} className="text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">الإنتاجية التراكمية (بالطن):</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  autoFocus
+                  required
+                  value={passTonsModal.tonsInput}
+                  onChange={e => setPassTonsModal(prev => ({ ...prev, tonsInput: e.target.value }))}
+                  className="w-full p-2.5 border border-slate-300 rounded-lg text-center font-mono text-lg font-black outline-none focus:border-blue-500"
+                />
+                {billetWeight > 0 && Number(passTonsModal.tonsInput) > 0 && (
+                  <p className="text-[10px] text-slate-500 font-bold text-center mt-1">
+                    يعادل تقريباً {Math.round(Number(passTonsModal.tonsInput) / billetWeight)} بليت (وزن البليت {billetWeight} طن)
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setPassTonsModal({ isOpen: false, standIndex: null, passNumber: null, isCurrent: false, tonsInput: '' })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg text-xs">إلغاء</button>
+                <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs shadow">حفظ الإنتاجية</button>
+              </div>
+            </div>
+          </form>
+        </Overlay>
+      )}
+
+      {/* ===== نافذة تعديل سجل تغييرة ممر (للأدمن / المدير) ===== */}
+      {editChangeModal.isOpen && (
+        <Overlay z={96}>
+          <form onSubmit={handleSavePassChange} className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-300 flex flex-col max-h-[90vh]">
+            <div className="bg-slate-900 p-3 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-amber-400" />
+                تعديل سجل التغيير ({editChangeForm.standName})
+              </h3>
+              <button type="button" onClick={() => setEditChangeModal({ isOpen: false, changeId: null, fromReview: false })} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">التاريخ:</label>
+                  <input
+                    type="date"
+                    value={editChangeForm.date}
+                    onChange={e => {
+                      const d = e.target.value;
+                      const valid = shiftsFor(isISODateFriday(d));
+                      setEditChangeForm(prev => ({ ...prev, date: d, shift: valid.includes(prev.shift) ? prev.shift : valid[0] }));
+                    }}
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">الوردية:</label>
+                  <select
+                    value={editChangeForm.shift}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, shift: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold bg-white outline-none focus:border-blue-500"
+                  >
+                    {shiftsFor(isISODateFriday(editChangeForm.date)).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">من ممر:</label>
+                  <input
+                    type="number" min="1" max="40"
+                    value={editChangeForm.fromPass}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, fromPass: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">إلى ممر:</label>
+                  <input
+                    type="number" min="1" max="40"
+                    value={editChangeForm.toPass}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, toPass: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">إنتاج الممر/الدرفيل (طن):</label>
+                  <input
+                    type="number" step="0.1" min="0"
+                    value={editChangeForm.tons}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, tons: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs font-bold outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">بليت إضافي وقت التغيير:</label>
+                  <input
+                    type="number" min="0"
+                    value={editChangeForm.billetsAtChange}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, billetsAtChange: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">مقاس المنتج (مم):</label>
+                  <select
+                    value={editChangeForm.productSize}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, productSize: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold bg-white outline-none focus:border-blue-500"
+                  >
+                    {['10', '12', '16', '18', '22'].map(s => <option key={s} value={s}>{s} مم</option>)}
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-slate-700 block mb-1">ملاحظات:</label>
+                  <textarea
+                    rows="2"
+                    value={editChangeForm.notes}
+                    onChange={e => setEditChangeForm(prev => ({ ...prev, notes: e.target.value }))}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:border-blue-500 resize-none"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 mt-1">
+                <button type="button" onClick={() => setEditChangeModal({ isOpen: false, changeId: null, fromReview: false })} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2.5 rounded-lg text-xs">إلغاء</button>
+                <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs shadow">حفظ التعديلات</button>
+              </div>
+            </div>
+          </form>
+        </Overlay>
+      )}
+
       {/* ===== سجل الستاند ===== */}
       {historyModal.isOpen && (
         <Overlay z={80}>
@@ -2679,6 +3346,12 @@ function App() {
                   </div>
                   {(c.requestedBy || c.approvedBy) && <div className="text-[9px] text-slate-500 font-bold">بواسطة: <span className="text-blue-700">{c.requestedBy || '-'}</span> | اعتماد: <span className="text-emerald-700">{c.approvedBy || '-'}</span></div>}
                   <p className="text-[10px] text-slate-700 bg-orange-50 p-1.5 rounded border border-orange-100"><span className="font-bold text-orange-700">ملاحظات:</span> {c.notes}</p>
+                  {isAdminRole && (
+                    <div className="flex justify-end gap-1.5 pt-1 border-t border-slate-100">
+                      <button onClick={() => openEditPassChange(c, false)} className="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-bold flex items-center gap-1"><Edit3 className="w-3 h-3" /> تعديل</button>
+                      <button onClick={() => handleDeletePassChange(c, false)} className="text-[10px] bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded font-bold flex items-center gap-1"><Trash2 className="w-3 h-3" /> حذف</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -3145,6 +3818,12 @@ function App() {
                         {c.requestedBy && <div className="text-[8px] text-slate-500 font-bold">بواسطة: {c.requestedBy}</div>}
                         <div className="flex justify-between text-[8px] text-slate-400 font-mono"><span dir="ltr">{c.date}</span><span dir="ltr">{c.shift}</span></div>
                         <p className="text-[10px] text-slate-700 bg-slate-50 p-1.5 rounded border border-slate-100 line-clamp-2" title={c.notes}><span className="font-bold text-blue-600">ملاحظات:</span> {c.notes}</p>
+                        {isAdminRole && (
+                          <div className="flex justify-end gap-1 pt-1 border-t border-slate-100">
+                            <button onClick={() => openEditPassChange(c, false)} className="text-[9px] bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded font-bold flex items-center gap-0.5"><Edit3 className="w-2.5 h-2.5" /> تعديل</button>
+                            <button onClick={() => handleDeletePassChange(c, false)} className="text-[9px] bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded font-bold flex items-center gap-0.5"><Trash2 className="w-2.5 h-2.5" /> حذف</button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3229,6 +3908,13 @@ function App() {
 }
 
 export default function Root() {
+  useEffect(() => {
+    // تسجيل الـ service worker (في النسخة المنشورة بس)
+    if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
+    const register = () => navigator.serviceWorker.register('/sw.js').catch(e => console.error('SW register failed:', e));
+    if (document.readyState === 'complete') register();
+    else window.addEventListener('load', register, { once: true });
+  }, []);
   return (
     <ErrorBoundary>
       <App />
