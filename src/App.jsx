@@ -776,8 +776,9 @@ const Credits = ({ onClick, compact = false }) => (
     <div className={compact ? 'flex flex-wrap items-center justify-center gap-x-4 gap-y-0.5' : 'flex flex-col gap-2'}>
       <div className="flex items-center justify-center gap-2">
         <Award className="w-3.5 h-3.5 text-sky-300 shrink-0" />
-        <span className="text-[10px] font-bold text-slate-400">إشراف هندسي</span>
+        <span className="text-[10px] font-bold text-slate-400"> فريق العمل</span>
         <span className="text-xs font-black text-sky-300">الباشمهندس حسين</span>
+
       </div>
       {compact
         ? <span className="hidden sm:block w-px h-3.5 bg-slate-600" />
